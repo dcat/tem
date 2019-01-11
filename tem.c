@@ -15,6 +15,10 @@
 #include <err.h>
 
 #include <pty.h> /* XXX */
+#include "arg.h"
+
+#define POLLTIMEOUT 60
+#define DEBUG(...)	warnx(__VA_ARGS__)
 
 struct xt_cursor {
 	int x, y;
@@ -34,9 +38,13 @@ typedef struct term_s {
 	struct xt_cursor cursor;
 	uint16_t *map, map_curs;
 	int padding;
+	uint16_t cursor_char;
+	char fontline[BUFSIZ];
+	char wants_redraw;
 } term_t;
 
 void clrscr();
+void xt_rectfill(int, int);
 
 
 static xcb_connection_t *conn;
@@ -46,7 +54,7 @@ static struct font_s *font;
 static term_t term;
 static xcb_gcontext_t gc;
 /* static char fontline[BUFSIZ] = "-*-gohufont-medium-*-*-*-11-*-*-*-*-*-*-1"; */
-static char fontline[BUFSIZ] = "-*-fixed-*-r-normal-*-10-*-*-*-*-*-*-1";
+/* static char fontline[BUFSIZ] = "-*-fixed-*-r-normal-*-10-*-*-*-*-*-*-1"; */
 static int d;
 
 /*
@@ -96,9 +104,11 @@ xcb_poly_text_16_simple(xcb_connection_t *c, xcb_drawable_t drawable,
 	return xcb_ret;
 }
 
-void
+int
 redraw() {
 	int x, y;
+
+	clrscr();
 
 	for (x = 0; x < term.width; x++)
 		for (y = 0; y < term.height; y++)
@@ -110,10 +120,11 @@ redraw() {
 				);
 
 	xcb_flush(conn);
+	return 0;
 }
 void
 scroll(int dir) {
-	puts("scroll");
+	/* add first line to history queue */
 	memmove(term.map, term.map + term.width, term.width * term.height * sizeof(uint16_t));
 	term.cursor.y -= 1;
 	clrscr();
@@ -182,6 +193,7 @@ load_font(xcb_gcontext_t gc, const char *name) {
 
 	xcb_change_gc(conn, gc, XCB_GC_FONT, &font);
 
+	DEBUG("loaded font '%s'", term.fontline);
 	return r;
 }
 
@@ -261,7 +273,7 @@ xt_rectfill(int x, int y) {
 }
 
 void
-xt_printf(char *fmt, ...) {
+xcb_printf(char *fmt, ...) {
 	va_list args;
 	char buf[BUFSIZ];
 	char *p;
@@ -276,19 +288,17 @@ xt_printf(char *fmt, ...) {
 		switch (*p) {
 		case '\t': {
 			int i;
-			int x = term.cursor.x;
-			int ts = 8 - (x % 8);
 
-			for (i = 0; i < ts; i++)
-				xt_printf(" ");
+			for (i = 0; i < 8 - (term.cursor.x % 8); i++)
+				;
+
+			xcb_printf("%*s", i, "");
 		 }	break;
 		case '\r':
 			term.cursor.x = 0;
 			break;
 		case '\n':
 			term.cursor.y++;
-			break;
-		case '\e':
 			break;
 		default:
 			set_cell(term.cursor.x, term.cursor.y, p);
@@ -297,37 +307,6 @@ xt_printf(char *fmt, ...) {
 		}
 
 		p += utf_len(p);
-	}
-}
-
-void
-xt_printfxy(int x, int y, char *fmt, ...) {
-	va_list args;
-	char buf[BUFSIZ];
-	int rx, ry;
-	char *p;
-
-	va_start(args, fmt);
-	vsprintf(buf, fmt, args);
-
-	p = buf;
-
-	rx = x;
-	ry = y;
-
-	while (*p) {
-		set_cell(rx, ry, p);
-		p += utf_len(p);
-		rx++;
-
-		if (rx <= term.width - 2)
-			continue;
-
-		rx = 0;
-		ry++;
-
-		if (ry > term.height)
-			return;
 	}
 }
 
@@ -356,8 +335,6 @@ resize(int x, int y) {
 	term.width = x - 1;
 	term.height = y - 1;
 	term.map = rmap;
-
-	xcb_flush(conn);
 }
 
 void
@@ -381,7 +358,7 @@ load_config() {
 	if (db != NULL) {
 		xcb_xrm_resource_get_string(db, "xt.font", NULL, &xrm_buf);
 		if (xrm_buf != NULL) {
-			strncpy(fontline, xrm_buf, BUFSIZ);
+			strncpy(term.fontline, xrm_buf, BUFSIZ);
 			free(xrm_buf);
 		}
 
@@ -415,7 +392,6 @@ set_bg(int bg) {
 	mask = XCB_CW_BACK_PIXEL;
 	values[0] = bg;
 	xcb_change_window_attributes(conn, win, mask, values);
-	xcb_flush(conn);
 }
 
 void
@@ -446,6 +422,8 @@ keypress(xcb_keycode_t keycode, xcb_keysym_t keysym) {
 	case (0xffe1):
 		/* lone modifiers, do nothing */
 		break;
+	case XK_Tab:
+		break;
 	case 0x1b3: /* ^L */
 		clrscr();
 		redraw();
@@ -467,16 +445,16 @@ keypress(xcb_keycode_t keycode, xcb_keysym_t keysym) {
 
 		*wdatap-- = 0;
 		term.cursor.x--;
-		//xt_rectfill(term.cursor.x, term.cursor.y);
 		set_fg(term.bg);
-		set_cell(term.cursor.x, term.cursor.y, "#");
-		xt_rectfill(term.cursor.x, term.cursor.y);
+		//set_cell(term.cursor.x, term.cursor.y, "#");
+		//xt_rectfill(term.cursor.x, term.cursor.y);
+		set_cell(term.cursor.x - 1, term.cursor.y, "  ");
+		//xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
 		set_fg(term.fg);
 		break;
 	default:
-		xt_printf("%lc", keysym);
-		//cursor_next(&term.cursor);
-		printf("unknown keysym: '%lc' (0x%x)\n", keysym, keysym);
+		xcb_printf("%lc", keysym);
+		DEBUG("unknown keysym: '%lc' (0x%x)", keysym, keysym);
 		*wdatap++ = keysym;
 		break;
 	}
@@ -496,11 +474,21 @@ main(int argc, char **argv) {
 	uint32_t values[3];
 
 	char *p;
+	char *argv0;
+
+	ARGBEGIN {
+	case 'f':
+		strncpy(term.fontline, ARGF(), BUFSIZ);
+		break;
+	} ARGEND
 
 	/* defaults */
 	term.bg = 0x000000;
 	term.fg = 0xFFFFFF;
 	term.padding = 0;
+	term.cursor_char = 0x2d4a;
+	term.wants_redraw = 1;
+	strncpy(term.fontline, "-*-gohufont-medium-*-*-*-11-*-*-*-*-*-*-1", BUFSIZ);
 
 	(void)setlocale(LC_ALL, "");
 
@@ -533,7 +521,7 @@ main(int argc, char **argv) {
 	gc = xcb_generate_id(conn);
 	xcb_create_gc(conn, gc, win, mask, values);
 
-	font = load_font(gc, fontline);
+	font = load_font(gc, term.fontline);
 	resize(80, 24);
 	set_bg(term.bg);
 	set_fg(term.fg);
@@ -554,8 +542,8 @@ main(int argc, char **argv) {
 	struct winsize ws;
 	struct termios tio;
 
-	ws.ws_col = term.width;
-	ws.ws_row = term.height;
+	ws.ws_col = term.width - 1;
+	ws.ws_row = term.height - 1;
 
 	pid = forkpty(&d, NULL, NULL, &ws);
 	if (pid < 0)
@@ -588,17 +576,20 @@ main(int argc, char **argv) {
 			if (xcb_connection_has_error(conn))
 				break;
 			else {
-				s = poll(fds, 1, 25);
+				s = poll(fds, 1, POLLTIMEOUT);
 				if (s < 0)
 					err(1, "poll");
 
 				if (s && fds[0].revents & POLLIN) {
 					memset(buf, 0, BUFSIZ);
 					n = read(d, &buf, BUFSIZ);
-					xt_printf("%*s", n, buf);
+					xcb_printf("%*s", n, buf);
+					term.wants_redraw = 1;
 				}
 
-				redraw();
+				if (term.wants_redraw)
+					term.wants_redraw = redraw();
+
 				continue;
 			}
 		}
@@ -606,10 +597,12 @@ main(int argc, char **argv) {
 		switch (ev->response_type & ~0x80) {
 		case XCB_EXPOSE: {
 			/* setup stuff */
+			term.wants_redraw = 1;
 		} break;
 		case XCB_KEY_PRESS: {
 			xcb_key_press_event_t *e = (xcb_key_press_event_t *)ev;
 			keypress(e->detail, xcb_get_keysym(e->detail, e->state));
+			term.wants_redraw = 1;
 		} break;
 		}
 	}
