@@ -36,6 +36,8 @@ typedef struct term_s {
 	int padding;
 } term_t;
 
+void clrscr();
+
 
 static xcb_connection_t *conn;
 static xcb_screen_t *scr;
@@ -95,22 +97,39 @@ xcb_poly_text_16_simple(xcb_connection_t *c, xcb_drawable_t drawable,
 }
 
 void
+redraw() {
+	int x, y;
+
+	for (x = 0; x < term.width; x++)
+		for (y = 0; y < term.height; y++)
+			if (term.map[x + (y * term.width)])
+				xcb_poly_text_16_simple(conn, win, gc,
+						(term.padding * 2) + ((x + 1) * font->width),
+						(term.padding * 2) + ((y + 1) * font->height),
+						1, &term.map[x + (y * term.width)]
+				);
+
+	xcb_flush(conn);
+}
+void
 scroll(int dir) {
 	puts("scroll");
-	memmove(term.map, term.map + term.width, term.width + (term.width * term.height));
+	memmove(term.map, term.map + term.width, term.width * term.height * sizeof(uint16_t));
+	term.cursor.y -= 1;
+	clrscr();
 }
 
 void
 cursor_next(struct xt_cursor *curs) {
 	if (curs->x + 1 >= term.width) {
-		if (curs->y + 1 >= term.height)
-			scroll(+1);
-		else
-			curs->y++;
+		curs->y++;
 
 		curs->x = 0;
 	} else
 		curs->x++;
+
+	if (curs->y + 1> term.height)
+		scroll(+1);
 
 	term.map_curs = curs->x + (curs->y * term.width);
 }
@@ -223,22 +242,6 @@ set_cell(int x, int y, char *str) {
 	ry = (y + 1) * font->height;
 
 	term.map[x + (y * term.width)] = c;
-}
-
-void
-redraw() {
-	int x, y;
-
-	for (x = 0; x < term.width; x++)
-		for (y = 0; y < term.height; y++)
-			if (term.map[x + (y * term.width)])
-				xcb_poly_text_16_simple(conn, win, gc,
-						(term.padding * 2) + ((x + 1) * font->width),
-						(term.padding * 2) + ((y + 1) * font->height),
-						1, &term.map[x + (y * term.width)]
-				);
-
-	xcb_flush(conn);
 }
 
 void
@@ -415,6 +418,20 @@ set_bg(int bg) {
 	xcb_flush(conn);
 }
 
+void
+clrscr() {
+	xcb_rectangle_t rect;
+	int rx, ry;
+
+	rect.x = 0;
+	rect.y = 0;
+	rect.width = term.width * font->width;
+	rect.height = term.height * font->height;
+
+	set_fg(term.bg);
+	xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
+	set_fg(term.fg);
+}
 
 static char wdata[BUFSIZ];
 static char *wdatap = wdata;
@@ -439,7 +456,6 @@ keypress(xcb_keycode_t keycode, xcb_keysym_t keysym) {
 		wdatap = wdata;
 		term.cursor.y++;
 		term.cursor.x = 0;
-		redraw();
 		//strcpy(wdata, "1+1\n");
 		//write(d, &wdata, 4);
 		break;
@@ -481,6 +497,7 @@ main(int argc, char **argv) {
 	/* defaults */
 	term.bg = 0x000000;
 	term.fg = 0xFFFFFF;
+	term.padding = 0;
 
 	(void)setlocale(LC_ALL, "");
 
@@ -568,24 +585,17 @@ main(int argc, char **argv) {
 			if (xcb_connection_has_error(conn))
 				break;
 			else {
-				s = poll(fds, 1, 50);
+				s = poll(fds, 1, 25);
 				if (s < 0)
 					err(1, "poll");
 
-				if (s) {
-					if (fds[0].revents & POLLOUT)
-						puts("timeout reached");
-
-					if (fds[0].revents & POLLIN) {
-						memset(buf, 0, BUFSIZ);
-						n = read(d, &buf, BUFSIZ);
-						//xt_printfxy(term.cursor.x, term.cursor.y, "%*s", n, buf);
-						xt_printf("%*s", n, buf);
-						redraw();
-						xcb_flush(conn);
-					}
+				if (s && fds[0].revents & POLLIN) {
+					memset(buf, 0, BUFSIZ);
+					n = read(d, &buf, BUFSIZ);
+					xt_printf("%*s", n, buf);
 				}
 
+				redraw();
 				continue;
 			}
 		}
@@ -597,7 +607,6 @@ main(int argc, char **argv) {
 		case XCB_KEY_PRESS: {
 			xcb_key_press_event_t *e = (xcb_key_press_event_t *)ev;
 			keypress(e->detail, xcb_get_keysym(e->detail, e->state));
-			redraw();
 		} break;
 		}
 	}
