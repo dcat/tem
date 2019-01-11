@@ -337,8 +337,8 @@ resize(int x, int y) {
 	uint32_t mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
 	uint16_t *rmap;
 
-	values[0] = font->width * x;
-	values[1] = font->height * y;
+	values[0] = font->width * (x - 1);
+	values[1] = font->height * (y - 1);
 
 	xcb_configure_window(conn, win, mask, values);
 
@@ -447,6 +447,7 @@ keypress(xcb_keycode_t keycode, xcb_keysym_t keysym) {
 		/* lone modifiers, do nothing */
 		break;
 	case 0x1b3: /* ^L */
+		clrscr();
 		redraw();
 		break;
 	case (0xff0d): /* enter */
@@ -461,6 +462,9 @@ keypress(xcb_keycode_t keycode, xcb_keysym_t keysym) {
 		break;
 	case XK_BackSpace: /* backspace */
 		puts("backspace");
+		if (wdatap == wdata)
+			break;
+
 		*wdatap-- = 0;
 		term.cursor.x--;
 		//xt_rectfill(term.cursor.x, term.cursor.y);
@@ -470,9 +474,8 @@ keypress(xcb_keycode_t keycode, xcb_keysym_t keysym) {
 		set_fg(term.fg);
 		break;
 	default:
-		xt_printfxy(term.cursor.x, term.cursor.y, "%lc", keysym);
-		cursor_next(&term.cursor);
-		xcb_flush(conn);
+		xt_printf("%lc", keysym);
+		//cursor_next(&term.cursor);
 		printf("unknown keysym: '%lc' (0x%x)\n", keysym, keysym);
 		*wdatap++ = keysym;
 		break;
