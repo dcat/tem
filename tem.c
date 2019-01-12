@@ -663,9 +663,6 @@ sgr(char *buf, size_t n) {
 					DEBUG("setting 256 fg to %d", f3);
 					term.fi = f3;
 					break;
-				default:
-					DEBUG("MAJOR PROBLEM: escape does not match 2 or 8 (%d)", f2);
-					break;
 				}
 			}
 		}
