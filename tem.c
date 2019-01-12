@@ -18,11 +18,23 @@
 #include <pty.h> /* XXX */
 #include "arg.h"
 
-#define POLLTIMEOUT 60
+#define POLLTIMEOUT 50
 #define DEBUG(...)	warnx(__VA_ARGS__)
+
+
+#define FOREACH_CELL(X)	for (X = 0; X < term.width * term.height; X++)
 
 struct xt_cursor {
 	int x, y;
+};
+
+enum {
+	BOLD = 1 << 1
+};
+
+struct tattr {
+	uint16_t ch;
+	int8_t fg, bg, attr;
 };
 
 struct font_s {
@@ -38,16 +50,22 @@ typedef struct term_s {
 	int fg, bg;
 	int default_fg, default_bg;
 	struct xt_cursor cursor;
-	uint16_t *map, map_curs;
+	/* uint16_t *map, map_curs; */
+	uint16_t map_curs;
+	struct tattr *map;
+
 	int padding;
 	uint16_t cursor_char;
 	char fontline[BUFSIZ];
 	char wants_redraw, esc;
 	char *esc_str;
+	uint8_t fi, bi, attr;
 } term_t;
 
 uint32_t colors[255] = {
 	/* http://www.calmar.ws/vim/256-xterm-24bit-rgb-color-chart.html */
+
+	/* base 16 */
 	[ 0] = 0x000000,
 	[ 1] = 0x800000,
 	[ 2] = 0x008000,
@@ -64,6 +82,224 @@ uint32_t colors[255] = {
 	[13] = 0xff00ff,
 	[14] = 0x00ffff,
 	[15] = 0xffffff,
+
+	/* 216 mod */
+	[ 16] = 0x000000,
+	[ 17] = 0x00005f,
+	[ 18] = 0x000087,
+	[ 19] = 0x0000af,
+	[ 20] = 0x0000d7,
+	[ 21] = 0x0000ff,
+	[ 22] = 0x005f00,
+	[ 23] = 0x005f5f,
+	[ 24] = 0x005f87,
+	[ 25] = 0x005faf,
+	[ 26] = 0x005fd7,
+	[ 27] = 0x005fff,
+	[ 28] = 0x008700,
+	[ 29] = 0x00875f,
+	[ 30] = 0x008787,
+	[ 31] = 0x0087af,
+	[ 32] = 0x0087d7,
+	[ 33] = 0x0087ff,
+	[ 34] = 0x00af00,
+	[ 35] = 0x00af5f,
+	[ 36] = 0x00af87,
+	[ 37] = 0x00afaf,
+	[ 38] = 0x00afd7,
+	[ 39] = 0x00afff,
+	[ 40] = 0x00d700,
+	[ 41] = 0x00d75f,
+	[ 42] = 0x00d787,
+	[ 43] = 0x00d7af,
+	[ 44] = 0x00d7d7,
+	[ 45] = 0x00d7ff,
+	[ 46] = 0x00ff00,
+	[ 47] = 0x00ff5f,
+	[ 48] = 0x00ff87,
+	[ 49] = 0x00ffaf,
+	[ 50] = 0x00ffd7,
+	[ 51] = 0x00ffff,
+	[ 52] = 0x5f0000,
+	[ 53] = 0x5f005f,
+	[ 54] = 0x5f0087,
+	[ 55] = 0x5f00af,
+	[ 56] = 0x5f00d7,
+	[ 57] = 0x5f00ff,
+	[ 58] = 0x5f5f00,
+	[ 59] = 0x5f5f5f,
+	[ 60] = 0x5f5f87,
+	[ 61] = 0x5f5faf,
+	[ 62] = 0x5f5fd7,
+	[ 63] = 0x5f5fff,
+	[ 64] = 0x5f8700,
+	[ 65] = 0x5f875f,
+	[ 66] = 0x5f8787,
+	[ 67] = 0x5f87af,
+	[ 68] = 0x5f87d7,
+	[ 69] = 0x5f87ff,
+	[ 70] = 0x5faf00,
+	[ 71] = 0x5faf5f,
+	[ 72] = 0x5faf87,
+	[ 73] = 0x5fafaf,
+	[ 74] = 0x5fafd7,
+	[ 75] = 0x5fafff,
+	[ 76] = 0x5fd700,
+	[ 77] = 0x5fd75f,
+	[ 78] = 0x5fd787,
+	[ 79] = 0x5fd7af,
+	[ 80] = 0x5fd7d7,
+	[ 81] = 0x5fd7ff,
+	[ 82] = 0x5fff00,
+	[ 83] = 0x5fff5f,
+	[ 84] = 0x5fff87,
+	[ 85] = 0x5fffaf,
+	[ 86] = 0x5fffd7,
+	[ 87] = 0x5fffff,
+	[ 88] = 0x870000,
+	[ 89] = 0x87005f,
+	[ 90] = 0x870087,
+	[ 91] = 0x8700af,
+	[ 92] = 0x8700d7,
+	[ 93] = 0x8700ff,
+	[ 94] = 0x875f00,
+	[ 95] = 0x875f5f,
+	[ 96] = 0x875f87,
+	[ 97] = 0x875faf,
+	[ 98] = 0x875fd7,
+	[ 99] = 0x875fff,
+	[100] = 0x878700,
+	[101] = 0x87875f,
+	[102] = 0x878787,
+	[103] = 0x8787af,
+	[104] = 0x8787d7,
+	[105] = 0x8787ff,
+	[106] = 0x87af00,
+	[107] = 0x87af5f,
+	[108] = 0x87af87,
+	[109] = 0x87afaf,
+	[110] = 0x87afd7,
+	[111] = 0x87afff,
+	[112] = 0x87d700,
+	[113] = 0x87d75f,
+	[114] = 0x87d787,
+	[115] = 0x87d7af,
+	[116] = 0x87d7d7,
+	[117] = 0x87d7ff,
+	[118] = 0x87ff00,
+	[119] = 0x87ff5f,
+	[120] = 0x87ff87,
+	[121] = 0x87ffaf,
+	[122] = 0x87ffd7,
+	[123] = 0x87ffff,
+	[124] = 0xaf0000,
+	[125] = 0xaf005f,
+	[126] = 0xaf0087,
+	[127] = 0xaf00af,
+	[128] = 0xaf00d7,
+	[129] = 0xaf00ff,
+	[130] = 0xaf5f00,
+	[131] = 0xaf5f5f,
+	[132] = 0xaf5f87,
+	[133] = 0xaf5faf,
+	[134] = 0xaf5fd7,
+	[135] = 0xaf5fff,
+	[136] = 0xaf8700,
+	[137] = 0xaf875f,
+	[138] = 0xaf8787,
+	[139] = 0xaf87af,
+	[140] = 0xaf87d7,
+	[141] = 0xaf87ff,
+	[142] = 0xafaf00,
+	[143] = 0xafaf5f,
+	[144] = 0xafaf87,
+	[145] = 0xafafaf,
+	[146] = 0xafafd7,
+	[147] = 0xafafff,
+	[148] = 0xafd700,
+	[149] = 0xafd75f,
+	[150] = 0xafd787,
+	[151] = 0xafd7af,
+	[152] = 0xafd7d7,
+	[153] = 0xafd7ff,
+	[154] = 0xafff00,
+	[155] = 0xafff5f,
+	[156] = 0xafff87,
+	[157] = 0xafffaf,
+	[158] = 0xafffd7,
+	[159] = 0xafffff,
+	[160] = 0xd70000,
+	[161] = 0xd7005f,
+	[162] = 0xd70087,
+	[163] = 0xd700af,
+	[164] = 0xd700d7,
+	[165] = 0xd700ff,
+	[166] = 0xd75f00,
+	[167] = 0xd75f5f,
+	[168] = 0xd75f87,
+	[169] = 0xd75faf,
+	[170] = 0xd75fd7,
+	[171] = 0xd75fff,
+	[172] = 0xd78700,
+	[173] = 0xd7875f,
+	[174] = 0xd78787,
+	[175] = 0xd787af,
+	[176] = 0xd787d7,
+	[177] = 0xd787ff,
+	[178] = 0xd7af00,
+	[179] = 0xd7af5f,
+	[180] = 0xd7af87,
+	[181] = 0xd7afaf,
+	[182] = 0xd7afd7,
+	[183] = 0xd7afff,
+	[184] = 0xd7d700,
+	[185] = 0xd7d75f,
+	[186] = 0xd7d787,
+	[187] = 0xd7d7af,
+	[188] = 0xd7d7d7,
+	[189] = 0xd7d7ff,
+	[190] = 0xd7ff00,
+	[191] = 0xd7ff5f,
+	[192] = 0xd7ff87,
+	[193] = 0xd7ffaf,
+	[194] = 0xd7ffd7,
+	[195] = 0xd7ffff,
+	[196] = 0xff0000,
+	[197] = 0xff005f,
+	[198] = 0xff0087,
+	[199] = 0xff00af,
+	[200] = 0xff00d7,
+	[201] = 0xff00ff,
+	[202] = 0xff5f00,
+	[203] = 0xff5f5f,
+	[204] = 0xff5f87,
+	[205] = 0xff5faf,
+	[206] = 0xff5fd7,
+	[207] = 0xff5fff,
+	[208] = 0xff8700,
+	[209] = 0xff875f,
+	[210] = 0xff8787,
+	[211] = 0xff87af,
+	[212] = 0xff87d7,
+	[213] = 0xff87ff,
+	[214] = 0xffaf00,
+	[215] = 0xffaf5f,
+	[216] = 0xffaf87,
+	[217] = 0xffafaf,
+	[218] = 0xffafd7,
+	[219] = 0xffafff,
+	[220] = 0xffd700,
+	[221] = 0xffd75f,
+	[222] = 0xffd787,
+	[223] = 0xffd7af,
+	[224] = 0xffd7d7,
+	[225] = 0xffd7ff,
+	[226] = 0xffff00,
+	[227] = 0xffff5f,
+	[228] = 0xffff87,
+	[229] = 0xffffaf,
+	[230] = 0xffffd7,
+	[231] = 0xffffff,
 };
 
 void clrscr();
@@ -163,18 +399,30 @@ set_color_bg(int c) {
 int
 redraw() {
 	int x, y;
+	int i;
 
-	set_fg(term.default_fg);
 	clrscr();
 
-	for (x = 0; x < term.width; x++)
-		for (y = 0; y < term.height; y++)
-			if (term.map[x + (y * term.width)])
+	for (x = 0; x < term.width; x++) {
+		for (y = 0; y < term.height; y++) {
+			i = x + (y * term.width);
+
+			if (term.map[i].ch) {
+				if (term.map[i].fg) {
+					if (term.map[i].fg != term.fg)
+						set_color_fg(term.map[i].fg);
+				} else {
+					set_fg(term.default_fg);
+				}
+
 				xcb_poly_text_16_simple(conn, win, gc,
 						(term.padding * 2) + ((x + 1) * font->width),
 						(term.padding * 2) + ((y + 1) * font->height),
-						1, &term.map[x + (y * term.width)]
+						1, &term.map[x + (y * term.width)].ch
 				);
+			}
+		}
+	}
 
 	xcb_flush(conn);
 	return 0;
@@ -182,7 +430,7 @@ redraw() {
 void
 scroll(int dir) {
 	/* add first line to history queue */
-	memmove(term.map, term.map + term.width, term.width * term.height * sizeof(uint16_t));
+	memmove(term.map, term.map + term.width, term.width * term.height * sizeof(*term.map));
 	term.cursor.y -= 1;
 	clrscr();
 }
@@ -196,7 +444,7 @@ cursor_next(struct xt_cursor *curs) {
 	} else
 		curs->x++;
 
-	if (curs->y + 1> term.height)
+	if (curs->y + 1 > term.height)
 		scroll(+1);
 
 	term.map_curs = curs->x + (curs->y * term.width);
@@ -303,14 +551,10 @@ void
 set_cell(int x, int y, char *str) {
 	uint16_t c;
 	uint8_t *utf = (uint8_t *)str;
-	int rx, ry;
 
 	c = utf_combine(str);
-
-	rx = (x + 1) * font->width;
-	ry = (y + 1) * font->height;
-
-	term.map[x + (y * term.width)] = c;
+	term.map[x + (y * term.width)].ch = c;
+	term.map[x + (y * term.width)].fg = term.fi;
 }
 
 void
@@ -340,6 +584,98 @@ valid_xy(int x, int y) {
 	return 1;
 }
 
+struct tattr *
+map_pos_now() {
+	return term.map + term.cursor.x + (term.cursor.y * term.cursor.x);
+}
+
+void
+sgr(char *buf, size_t n) {
+	int c;
+	char *p;
+	size_t i;
+	int longfmt;
+
+	i = n;
+	p = buf;
+	longfmt = 0;
+
+	n -= 2;
+
+	DEBUG("'%s'", p);
+
+	while (sscanf(p, "%u", &c)) {
+		DEBUG("in loop (c:%d)", c);
+
+		switch (c) {
+		case 0:
+			DEBUG("resetting colors");
+			term.attr = term.bi = term.fi = 0;
+			break;
+		case 1:
+			term.attr |= BOLD;
+			break;
+		case 30:
+		case 31:
+		case 32:
+		case 33:
+		case 34:
+		case 35:
+		case 36:
+		case 37:
+			DEBUG("setting fg to %d", c - 30);
+			term.fi =  term.attr & BOLD ? c - 30 + 8 : c - 30;
+			break;
+		case 38:
+			longfmt = 1;
+			break;
+		case 40:
+		case 41:
+		case 42:
+		case 43:
+		case 44:
+		case 45:
+		case 46:
+		case 47:
+			term.bi =  term.attr & BOLD ? c - 40 + 8 : c - 40;
+			break;
+		case 48:
+			longfmt = 1;
+			break;
+		}
+
+		if (longfmt) {
+			int r, g, b, f1, f2, f3, ret;
+			DEBUG("longfmt");
+
+			if (sscanf(p, "%u;%u;%u;%u;%u;%u", &f1, &f2, &f3, &r, &g, &b) > 1) {
+				DEBUG("sscanf match");
+
+				if (f1 != 38)
+					return;
+
+				switch (f2) {
+				case 2:
+					/* rgb */
+					break;
+				case 5:
+					/* 256 */
+					DEBUG("setting 256 fg to %d", f3);
+					term.fi = f3;
+					break;
+				default:
+					DEBUG("MAJOR PROBLEM: escape does not match 2 or 8 (%d)", f2);
+					break;
+				}
+			}
+		}
+
+		while (*p != ';')
+			(void)*p++;
+	}
+
+}
+
 void
 csiseq(char *esc, size_t n) {
 	char *p;
@@ -349,37 +685,36 @@ csiseq(char *esc, size_t n) {
 	if (p[1] != '[')
 		return;
 
-
-	DEBUG("csi length %ld", n);
+	DEBUG("csi length %ld, type '%c'", n, p[n]);
 
 	*p++;
 	*p++;
 	//*p += 2;
 
+	for (int i = 0; i < n; i++)
+		DEBUG("%d: %lc", i, p[i]);
+
 	switch (p[n]) {
-	case 'm':
-		/* sgr */
-		break;
 	case 'J': {
 		uint16_t *off;
 		off_t len;
 
+		DEBUG("clear screen?");
 		switch (p[0]) {
-		case 'J':
-		case '0':
-			off = term.map + term.cursor.x + (term.cursor.y * term.cursor.x);
-			len = (term.cursor.x * term.cursor.y) - (term.map - off);
-			memset(off, 0, len);
-			/* clear from cursor to end of screen (default) */
-			break;
-		case '1':
-			/* clear from cursor to beginning of screen */
-			break;
-		case '2':
-			/* clear entire screen */
-			break;
 		case '3':
 			/* clear screen and wipe scrollback */
+		case '2':
+			/* clear entire screen */
+		case '1':
+			/* clear from cursor to beginning of screen */
+		case 'J':
+		case '0':
+			/* clear from cursor to end of screen (default) */
+
+			/* XXX */
+			DEBUG("clearing screen");
+			memset(term.map, 0, term.width * term.height * sizeof(*term.map));
+			term.cursor.x = term.cursor.y = 0;
 			break;
 		}
 	}	break;
@@ -404,8 +739,20 @@ csiseq(char *esc, size_t n) {
 			term.cursor.y = row - 1;
 		}
 	}	break;
+	case 'm': {
+		/* sgr */
+		int c;
+		int i;
+
+		for (i = c = 0; i < n; i++)
+			if (p[i] == ';')
+				c++;
+
+		DEBUG("%d", c);
+		sgr(p, c);
+	}	break;
 	default:
-		DEBUG("unknown escape type: '%lc'", p[n]);
+		DEBUG("unknown escape type: '%lc' (0x%x)", p[n], p[n]);
 		break;
 	}
 }
@@ -443,13 +790,14 @@ xcb_printf(char *fmt, ...) {
 				case '8':
 				case '9':
 				case ';':
-				case '[':
 					n++;
 					/* accepted characters */
 					break;
+				case '[':
+					break;
 				default:
 					csiseq(term.esc_str, n);
-					term.esc = !term.esc;
+					term.esc = 0;
 					break;
 				}
 
@@ -494,18 +842,22 @@ void
 resize(int x, int y) {
 	uint32_t values[3];
 	uint32_t mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
-	uint16_t *rmap;
+	struct tattr *rmap;
+	int i;
 
 	values[0] = font->width * (x - 1);
 	values[1] = font->height * (y - 1);
 
 	xcb_configure_window(conn, win, mask, values);
 
-	rmap = malloc(sizeof(int) * (x * y));
+	rmap = malloc(sizeof(struct tattr) * (x * y));
 	if (rmap == NULL)
 		err(1, "malloc");
 
 	memset(rmap, 0, x * y * sizeof(uint16_t));
+
+	FOREACH_CELL(i)
+		term.map[i].bg = term.map[i].fg = -1;
 
 	if (term.map != NULL) {
 		memcpy(rmap, term.map, term.width * term.height);
@@ -554,19 +906,10 @@ load_config() {
 
 void
 clrscr() {
-	xcb_rectangle_t rect;
-	int rx, ry;
-	uint32_t tmpc;
-
-	rect.x = 0;
-	rect.y = 0;
-	rect.width = term.width * font->width;
-	rect.height = term.height * font->height;
-
-	tmpc = term.fg;
-	set_fg(term.bg);
-	xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
-	set_fg(tmpc);
+	xcb_clear_area(conn, 0, win, 0, 0,
+			term.width * font->width,
+			term.height * font->height
+	);
 }
 
 static char wdata[BUFSIZ];
@@ -605,13 +948,11 @@ keypress(xcb_keycode_t keycode, xcb_keysym_t keysym) {
 
 		*wdatap-- = 0;
 		term.cursor.x--;
-		set_fg(term.bg);
 		set_cell(term.cursor.x, term.cursor.y, "  ");
-		set_fg(term.fg);
 		break;
 	default:
 		xcb_printf("%lc", keysym);
-		DEBUG("unknown keysym: '%lc' (0x%x)", keysym, keysym);
+		//DEBUG("unknown keysym: '%lc' (0x%x)", keysym, keysym);
 		*wdatap++ = keysym;
 		break;
 	}
@@ -646,6 +987,7 @@ main(int argc, char **argv) {
 	term.cursor_char = 0x2d4a;
 	term.wants_redraw = 1;
 	strncpy(term.fontline, "-*-gohufont-medium-*-*-*-11-*-*-*-*-*-*-1", BUFSIZ);
+	term.fi = term.bi = 0;
 
 	(void)setlocale(LC_ALL, "");
 
