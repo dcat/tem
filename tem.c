@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <poll.h>
 #include <err.h>
@@ -35,13 +36,35 @@ struct font_s {
 typedef struct term_s {
 	int width, height;
 	int fg, bg;
+	int default_fg, default_bg;
 	struct xt_cursor cursor;
 	uint16_t *map, map_curs;
 	int padding;
 	uint16_t cursor_char;
 	char fontline[BUFSIZ];
-	char wants_redraw;
+	char wants_redraw, esc;
+	char *esc_str;
 } term_t;
+
+uint32_t colors[255] = {
+	/* http://www.calmar.ws/vim/256-xterm-24bit-rgb-color-chart.html */
+	[ 0] = 0x000000,
+	[ 1] = 0x800000,
+	[ 2] = 0x008000,
+	[ 3] = 0x808000,
+	[ 4] = 0x000080,
+	[ 5] = 0x800080,
+	[ 6] = 0x008080,
+	[ 7] = 0xc0c0c0,
+	[ 8] = 0x808080,
+	[ 9] = 0xff0000,
+	[10] = 0x00ff00,
+	[11] = 0xffff00,
+	[12] = 0x0000ff,
+	[13] = 0xff00ff,
+	[14] = 0x00ffff,
+	[15] = 0xffffff,
+};
 
 void clrscr();
 void xt_rectfill(int, int);
@@ -104,10 +127,44 @@ xcb_poly_text_16_simple(xcb_connection_t *c, xcb_drawable_t drawable,
 	return xcb_ret;
 }
 
+void
+set_fg(int fg) {
+	uint32_t mask;
+	uint32_t values[3];
+
+	mask = XCB_GC_FOREGROUND;
+	values[0] = fg;
+	xcb_change_gc(conn, gc, mask, values);
+	term.fg = fg;
+
+	return;
+}
+
+void
+set_bg(int bg) {
+	uint32_t mask;
+	uint32_t values[2];
+
+	mask = XCB_CW_BACK_PIXEL;
+	values[0] = bg;
+	xcb_change_window_attributes(conn, win, mask, values);
+}
+
+void
+set_color_fg(int c) {
+	set_fg(colors[c]);
+}
+
+void
+set_color_bg(int c) {
+	set_bg(colors[c]);
+}
+
 int
 redraw() {
 	int x, y;
 
+	set_fg(term.default_fg);
 	clrscr();
 
 	for (x = 0; x < term.width; x++)
@@ -272,19 +329,137 @@ xt_rectfill(int x, int y) {
 	xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
 }
 
+int
+valid_xy(int x, int y) {
+	if (x > term.width || x < 0)
+		return 0;
+
+	if (y > term.height || y < 0)
+		return 0;
+
+	return 1;
+}
+
+void
+csiseq(char *esc, size_t n) {
+	char *p;
+
+	p = esc;
+
+	if (p[1] != '[')
+		return;
+
+
+	DEBUG("csi length %ld", n);
+
+	*p++;
+	*p++;
+	//*p += 2;
+
+	switch (p[n]) {
+	case 'm':
+		/* sgr */
+		break;
+	case 'J': {
+		uint16_t *off;
+		off_t len;
+
+		switch (p[0]) {
+		case 'J':
+		case '0':
+			off = term.map + term.cursor.x + (term.cursor.y * term.cursor.x);
+			len = (term.cursor.x * term.cursor.y) - (term.map - off);
+			memset(off, 0, len);
+			/* clear from cursor to end of screen (default) */
+			break;
+		case '1':
+			/* clear from cursor to beginning of screen */
+			break;
+		case '2':
+			/* clear entire screen */
+			break;
+		case '3':
+			/* clear screen and wipe scrollback */
+			break;
+		}
+	}	break;
+	case 'H': {
+		/* CUP: n ; m H */
+		unsigned int row, col;
+
+		row = col = 0;
+
+		if (memchr(p, ';', n)) {
+			/* n + m */
+			sscanf(p, "%u:%u", &row, &col);
+			DEBUG("cup(%d, %d);", col, row);
+		} else {
+			/* n only */
+			DEBUG("cup(0, %d);", row);
+			sscanf(p, "%u", &row);
+		}
+
+		if (valid_xy(row, col)) {
+			term.cursor.x = col - 1;
+			term.cursor.y = row - 1;
+		}
+	}	break;
+	default:
+		DEBUG("unknown escape type: '%lc'", p[n]);
+		break;
+	}
+}
+
 void
 xcb_printf(char *fmt, ...) {
 	va_list args;
 	char buf[BUFSIZ];
 	char *p;
+	size_t n = 0;
 
 	va_start(args, fmt);
 	vsprintf(buf, fmt, args);
 
+	buf[BUFSIZ - 1] = 0;
+
 	p = buf;
 
 	while (*p) {
-		fflush(stdout);
+		if (term.esc) {
+			//DEBUG("%ld %c", p - buf, *p);
+
+			if (p - buf == 1 && *p == '[')
+				;
+			else
+				switch (*p) {
+				case '0':
+				case '1':
+				case '2':
+				case '3':
+				case '4':
+				case '5':
+				case '6':
+				case '7':
+				case '8':
+				case '9':
+				case ';':
+				case '[':
+					n++;
+					/* accepted characters */
+					break;
+				default:
+					csiseq(term.esc_str, n);
+					term.esc = !term.esc;
+					break;
+				}
+
+			(void)*p++;
+			if (p - buf >= BUFSIZ)
+				return;
+
+			continue;
+		}
+
 		switch (*p) {
 		case '\t': {
 			int i;
@@ -299,6 +474,11 @@ xcb_printf(char *fmt, ...) {
 			break;
 		case '\n':
 			term.cursor.y++;
+			break;
+		case 0x1b:
+			term.esc = 1;
+			term.esc_str = p;
+			n = 0;
 			break;
 		default:
 			set_cell(term.cursor.x, term.cursor.y, p);
@@ -338,18 +518,6 @@ resize(int x, int y) {
 }
 
 void
-set_fg(int fg) {
-	uint32_t mask;
-	uint32_t values[3];
-
-	mask = XCB_GC_FOREGROUND;
-	values[0] = fg;
-	xcb_change_gc(conn, gc, mask, values);
-
-	return;
-}
-
-void
 load_config() {
 	xcb_xrm_database_t *db;
 	char *xrm_buf;
@@ -385,28 +553,20 @@ load_config() {
 }
 
 void
-set_bg(int bg) {
-	uint32_t mask;
-	uint32_t values[2];
-
-	mask = XCB_CW_BACK_PIXEL;
-	values[0] = bg;
-	xcb_change_window_attributes(conn, win, mask, values);
-}
-
-void
 clrscr() {
 	xcb_rectangle_t rect;
 	int rx, ry;
+	uint32_t tmpc;
 
 	rect.x = 0;
 	rect.y = 0;
 	rect.width = term.width * font->width;
 	rect.height = term.height * font->height;
 
+	tmpc = term.fg;
 	set_fg(term.bg);
 	xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
-	set_fg(term.fg);
+	set_fg(tmpc);
 }
 
 static char wdata[BUFSIZ];
@@ -446,10 +606,7 @@ keypress(xcb_keycode_t keycode, xcb_keysym_t keysym) {
 		*wdatap-- = 0;
 		term.cursor.x--;
 		set_fg(term.bg);
-		//set_cell(term.cursor.x, term.cursor.y, "#");
-		//xt_rectfill(term.cursor.x, term.cursor.y);
-		set_cell(term.cursor.x - 1, term.cursor.y, "  ");
-		//xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
+		set_cell(term.cursor.x, term.cursor.y, "  ");
 		set_fg(term.fg);
 		break;
 	default:
@@ -483,8 +640,8 @@ main(int argc, char **argv) {
 	} ARGEND
 
 	/* defaults */
-	term.bg = 0x000000;
-	term.fg = 0xFFFFFF;
+	term.bg = term.default_bg = 0x000000;
+	term.fg = term.default_fg = 0xFFFFFF;
 	term.padding = 0;
 	term.cursor_char = 0x2d4a;
 	term.wants_redraw = 1;
@@ -500,7 +657,7 @@ main(int argc, char **argv) {
 
 	load_config();
 	mask = XCB_CW_EVENT_MASK;
-	values[0] = XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS;
+	values[0] = XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
 
 	win = xcb_generate_id(conn);
 	xcb_create_window (conn,
@@ -529,6 +686,9 @@ main(int argc, char **argv) {
 	xcb_flush(conn);
 	atexit(cleanup);
 	signal(SIGCHLD, cleanup);
+
+	set_color_fg(13);
+	xcb_flush(conn);
 
 	xcb_generic_event_t *ev;
 	int s;
@@ -604,6 +764,8 @@ main(int argc, char **argv) {
 			keypress(e->detail, xcb_get_keysym(e->detail, e->state));
 			term.wants_redraw = 1;
 		} break;
+		default:
+			DEBUG("unknown event %d", ev->response_type & ~0x80);
 		}
 	}
 
