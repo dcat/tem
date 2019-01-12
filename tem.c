@@ -642,7 +642,7 @@ main(int argc, char **argv) {
 	/* defaults */
 	term.bg = term.default_bg = 0x000000;
 	term.fg = term.default_fg = 0xFFFFFF;
-	term.padding = 0;
+	term.padding = -2;
 	term.cursor_char = 0x2d4a;
 	term.wants_redraw = 1;
 	strncpy(term.fontline, "-*-gohufont-medium-*-*-*-11-*-*-*-*-*-*-1", BUFSIZ);
