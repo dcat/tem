@@ -172,7 +172,7 @@ void
 scroll(int dir) {
 	/* add first line to history queue */
 	memmove(term.map, term.map + term.width, term.width * term.height * sizeof(*term.map));
-	term.cursor.y -= 1;
+	cursormv(UP);
 	clrscr();
 }
 
@@ -315,11 +315,6 @@ valid_xy(int x, int y) {
 	return 1;
 }
 
-struct tattr *
-map_pos_now() {
-	return term.map + term.cursor.x + (term.cursor.y * term.cursor.x);
-}
-
 void
 sgr(char *buf, size_t n) {
 	int c;
@@ -459,16 +454,18 @@ again:
 		/* CUP: n ; m H */
 		int row, col;
 
-		row = col = 0;
+		row = col = 1;
 
 		if (memchr(p, ';', n)) /* n + m */
 			sscanf(p, "%d;%d", &row, &col);
 		else /* n only */
 			sscanf(p, "%d", &row);
 
+		row--; col--;
+
 		if (valid_xy(col, row)) {
-			term.cursor.x = col - 1;
-			term.cursor.y = row - 1;
+			term.cursor.x = col;
+			term.cursor.y = row;
 			term.wants_redraw = 1;
 		}
 	}	break;
