@@ -19,13 +19,21 @@
 #include "arg.h"
 
 #define POLLTIMEOUT 50
-#define DEBUG(...)	warnx(__VA_ARGS__)
+#define SHELL "/bin/sh"
 
 
 #define FOREACH_CELL(X)	for (X = 0; X < term.width * term.height; X++)
+#define DEBUG(...)	warnx(__VA_ARGS__)
 
 struct xt_cursor {
 	int x, y;
+};
+
+enum {
+	UP    = 'A',
+	DOWN  = 'B',
+	RIGHT = 'C',
+	LEFT  = 'D'
 };
 
 enum {
@@ -53,257 +61,283 @@ typedef struct term_s {
 	/* uint16_t *map, map_curs; */
 	uint16_t map_curs;
 	struct tattr *map;
-
 	int padding;
 	uint16_t cursor_char;
 	char fontline[BUFSIZ];
 	char wants_redraw, esc;
 	char *esc_str;
 	uint8_t fi, bi, attr;
+	char *shell;
 } term_t;
 
 uint32_t colors[255] = {
 	/* http://www.calmar.ws/vim/256-xterm-24bit-rgb-color-chart.html */
 
 	/* base 16 */
-	[ 0] = 0x000000,
-	[ 1] = 0x800000,
-	[ 2] = 0x008000,
-	[ 3] = 0x808000,
-	[ 4] = 0x000080,
-	[ 5] = 0x800080,
-	[ 6] = 0x008080,
-	[ 7] = 0xc0c0c0,
-	[ 8] = 0x808080,
-	[ 9] = 0xff0000,
-	[10] = 0x00ff00,
-	[11] = 0xffff00,
-	[12] = 0x0000ff,
-	[13] = 0xff00ff,
-	[14] = 0x00ffff,
-	[15] = 0xffffff,
+	[ 0] = 0x800000,
+	[ 1] = 0x008000,
+	[ 2] = 0x808000,
+	[ 3] = 0x000080,
+	[ 4] = 0x800080,
+	[ 5] = 0x008080,
+	[ 6] = 0xc0c0c0,
+	[ 7] = 0x808080,
+	[ 8] = 0xff0000,
+	[9] = 0x00ff00,
+	[10] = 0xffff00,
+	[11] = 0x0000ff,
+	[12] = 0xff00ff,
+	[13] = 0x00ffff,
+	[14] = 0xffffff,
 
-	/* 216 mod */
-	[ 16] = 0x000000,
-	[ 17] = 0x00005f,
-	[ 18] = 0x000087,
-	[ 19] = 0x0000af,
-	[ 20] = 0x0000d7,
-	[ 21] = 0x0000ff,
-	[ 22] = 0x005f00,
-	[ 23] = 0x005f5f,
-	[ 24] = 0x005f87,
-	[ 25] = 0x005faf,
-	[ 26] = 0x005fd7,
-	[ 27] = 0x005fff,
-	[ 28] = 0x008700,
-	[ 29] = 0x00875f,
-	[ 30] = 0x008787,
-	[ 31] = 0x0087af,
-	[ 32] = 0x0087d7,
-	[ 33] = 0x0087ff,
-	[ 34] = 0x00af00,
-	[ 35] = 0x00af5f,
-	[ 36] = 0x00af87,
-	[ 37] = 0x00afaf,
-	[ 38] = 0x00afd7,
-	[ 39] = 0x00afff,
-	[ 40] = 0x00d700,
-	[ 41] = 0x00d75f,
-	[ 42] = 0x00d787,
-	[ 43] = 0x00d7af,
-	[ 44] = 0x00d7d7,
-	[ 45] = 0x00d7ff,
-	[ 46] = 0x00ff00,
-	[ 47] = 0x00ff5f,
-	[ 48] = 0x00ff87,
-	[ 49] = 0x00ffaf,
-	[ 50] = 0x00ffd7,
-	[ 51] = 0x00ffff,
-	[ 52] = 0x5f0000,
-	[ 53] = 0x5f005f,
-	[ 54] = 0x5f0087,
-	[ 55] = 0x5f00af,
-	[ 56] = 0x5f00d7,
-	[ 57] = 0x5f00ff,
-	[ 58] = 0x5f5f00,
-	[ 59] = 0x5f5f5f,
-	[ 60] = 0x5f5f87,
-	[ 61] = 0x5f5faf,
-	[ 62] = 0x5f5fd7,
-	[ 63] = 0x5f5fff,
-	[ 64] = 0x5f8700,
-	[ 65] = 0x5f875f,
-	[ 66] = 0x5f8787,
-	[ 67] = 0x5f87af,
-	[ 68] = 0x5f87d7,
-	[ 69] = 0x5f87ff,
-	[ 70] = 0x5faf00,
-	[ 71] = 0x5faf5f,
-	[ 72] = 0x5faf87,
-	[ 73] = 0x5fafaf,
-	[ 74] = 0x5fafd7,
-	[ 75] = 0x5fafff,
-	[ 76] = 0x5fd700,
-	[ 77] = 0x5fd75f,
-	[ 78] = 0x5fd787,
-	[ 79] = 0x5fd7af,
-	[ 80] = 0x5fd7d7,
-	[ 81] = 0x5fd7ff,
-	[ 82] = 0x5fff00,
-	[ 83] = 0x5fff5f,
-	[ 84] = 0x5fff87,
-	[ 85] = 0x5fffaf,
-	[ 86] = 0x5fffd7,
-	[ 87] = 0x5fffff,
-	[ 88] = 0x870000,
-	[ 89] = 0x87005f,
-	[ 90] = 0x870087,
-	[ 91] = 0x8700af,
-	[ 92] = 0x8700d7,
-	[ 93] = 0x8700ff,
-	[ 94] = 0x875f00,
-	[ 95] = 0x875f5f,
-	[ 96] = 0x875f87,
-	[ 97] = 0x875faf,
-	[ 98] = 0x875fd7,
-	[ 99] = 0x875fff,
-	[100] = 0x878700,
-	[101] = 0x87875f,
-	[102] = 0x878787,
-	[103] = 0x8787af,
-	[104] = 0x8787d7,
-	[105] = 0x8787ff,
-	[106] = 0x87af00,
-	[107] = 0x87af5f,
-	[108] = 0x87af87,
-	[109] = 0x87afaf,
-	[110] = 0x87afd7,
-	[111] = 0x87afff,
-	[112] = 0x87d700,
-	[113] = 0x87d75f,
-	[114] = 0x87d787,
-	[115] = 0x87d7af,
-	[116] = 0x87d7d7,
-	[117] = 0x87d7ff,
-	[118] = 0x87ff00,
-	[119] = 0x87ff5f,
-	[120] = 0x87ff87,
-	[121] = 0x87ffaf,
-	[122] = 0x87ffd7,
-	[123] = 0x87ffff,
-	[124] = 0xaf0000,
-	[125] = 0xaf005f,
-	[126] = 0xaf0087,
-	[127] = 0xaf00af,
-	[128] = 0xaf00d7,
-	[129] = 0xaf00ff,
-	[130] = 0xaf5f00,
-	[131] = 0xaf5f5f,
-	[132] = 0xaf5f87,
-	[133] = 0xaf5faf,
-	[134] = 0xaf5fd7,
-	[135] = 0xaf5fff,
-	[136] = 0xaf8700,
-	[137] = 0xaf875f,
-	[138] = 0xaf8787,
-	[139] = 0xaf87af,
-	[140] = 0xaf87d7,
-	[141] = 0xaf87ff,
-	[142] = 0xafaf00,
-	[143] = 0xafaf5f,
-	[144] = 0xafaf87,
-	[145] = 0xafafaf,
-	[146] = 0xafafd7,
-	[147] = 0xafafff,
-	[148] = 0xafd700,
-	[149] = 0xafd75f,
-	[150] = 0xafd787,
-	[151] = 0xafd7af,
-	[152] = 0xafd7d7,
-	[153] = 0xafd7ff,
-	[154] = 0xafff00,
-	[155] = 0xafff5f,
-	[156] = 0xafff87,
-	[157] = 0xafffaf,
-	[158] = 0xafffd7,
-	[159] = 0xafffff,
-	[160] = 0xd70000,
-	[161] = 0xd7005f,
-	[162] = 0xd70087,
-	[163] = 0xd700af,
-	[164] = 0xd700d7,
-	[165] = 0xd700ff,
-	[166] = 0xd75f00,
-	[167] = 0xd75f5f,
-	[168] = 0xd75f87,
-	[169] = 0xd75faf,
-	[170] = 0xd75fd7,
-	[171] = 0xd75fff,
-	[172] = 0xd78700,
-	[173] = 0xd7875f,
-	[174] = 0xd78787,
-	[175] = 0xd787af,
-	[176] = 0xd787d7,
-	[177] = 0xd787ff,
-	[178] = 0xd7af00,
-	[179] = 0xd7af5f,
-	[180] = 0xd7af87,
-	[181] = 0xd7afaf,
-	[182] = 0xd7afd7,
-	[183] = 0xd7afff,
-	[184] = 0xd7d700,
-	[185] = 0xd7d75f,
-	[186] = 0xd7d787,
-	[187] = 0xd7d7af,
-	[188] = 0xd7d7d7,
-	[189] = 0xd7d7ff,
-	[190] = 0xd7ff00,
-	[191] = 0xd7ff5f,
-	[192] = 0xd7ff87,
-	[193] = 0xd7ffaf,
-	[194] = 0xd7ffd7,
-	[195] = 0xd7ffff,
-	[196] = 0xff0000,
-	[197] = 0xff005f,
-	[198] = 0xff0087,
-	[199] = 0xff00af,
-	[200] = 0xff00d7,
-	[201] = 0xff00ff,
-	[202] = 0xff5f00,
-	[203] = 0xff5f5f,
-	[204] = 0xff5f87,
-	[205] = 0xff5faf,
-	[206] = 0xff5fd7,
-	[207] = 0xff5fff,
-	[208] = 0xff8700,
-	[209] = 0xff875f,
-	[210] = 0xff8787,
-	[211] = 0xff87af,
-	[212] = 0xff87d7,
-	[213] = 0xff87ff,
-	[214] = 0xffaf00,
-	[215] = 0xffaf5f,
-	[216] = 0xffaf87,
-	[217] = 0xffafaf,
-	[218] = 0xffafd7,
-	[219] = 0xffafff,
-	[220] = 0xffd700,
-	[221] = 0xffd75f,
-	[222] = 0xffd787,
-	[223] = 0xffd7af,
-	[224] = 0xffd7d7,
-	[225] = 0xffd7ff,
-	[226] = 0xffff00,
-	[227] = 0xffff5f,
-	[228] = 0xffff87,
-	[229] = 0xffffaf,
-	[230] = 0xffffd7,
-	[231] = 0xffffff,
+	/* 116 mod */
+	[ 15] = 0x000000,
+	[ 16] = 0x00005f,
+	[ 17] = 0x000087,
+	[ 18] = 0x0000af,
+	[ 19] = 0x0000d7,
+	[ 20] = 0x0000ff,
+	[ 21] = 0x005f00,
+	[ 22] = 0x005f5f,
+	[ 23] = 0x005f87,
+	[ 24] = 0x005faf,
+	[ 25] = 0x005fd7,
+	[ 26] = 0x005fff,
+	[ 27] = 0x008700,
+	[ 28] = 0x00875f,
+	[ 29] = 0x008787,
+	[ 30] = 0x0087af,
+	[ 31] = 0x0087d7,
+	[ 32] = 0x0087ff,
+	[ 33] = 0x00af00,
+	[ 34] = 0x00af5f,
+	[ 35] = 0x00af87,
+	[ 36] = 0x00afaf,
+	[ 37] = 0x00afd7,
+	[ 38] = 0x00afff,
+	[ 39] = 0x00d700,
+	[ 40] = 0x00d75f,
+	[ 41] = 0x00d787,
+	[ 42] = 0x00d7af,
+	[ 43] = 0x00d7d7,
+	[ 44] = 0x00d7ff,
+	[ 45] = 0x00ff00,
+	[ 46] = 0x00ff5f,
+	[ 47] = 0x00ff87,
+	[ 48] = 0x00ffaf,
+	[ 49] = 0x00ffd7,
+	[ 50] = 0x00ffff,
+	[ 51] = 0x5f0000,
+	[ 52] = 0x5f005f,
+	[ 53] = 0x5f0087,
+	[ 54] = 0x5f00af,
+	[ 55] = 0x5f00d7,
+	[ 56] = 0x5f00ff,
+	[ 57] = 0x5f5f00,
+	[ 58] = 0x5f5f5f,
+	[ 59] = 0x5f5f87,
+	[ 60] = 0x5f5faf,
+	[ 61] = 0x5f5fd7,
+	[ 62] = 0x5f5fff,
+	[ 63] = 0x5f8700,
+	[ 64] = 0x5f875f,
+	[ 65] = 0x5f8787,
+	[ 66] = 0x5f87af,
+	[ 67] = 0x5f87d7,
+	[ 68] = 0x5f87ff,
+	[ 69] = 0x5faf00,
+	[ 70] = 0x5faf5f,
+	[ 71] = 0x5faf87,
+	[ 72] = 0x5fafaf,
+	[ 73] = 0x5fafd7,
+	[ 74] = 0x5fafff,
+	[ 75] = 0x5fd700,
+	[ 76] = 0x5fd75f,
+	[ 77] = 0x5fd787,
+	[ 78] = 0x5fd7af,
+	[ 79] = 0x5fd7d7,
+	[ 80] = 0x5fd7ff,
+	[ 81] = 0x5fff00,
+	[ 82] = 0x5fff5f,
+	[ 83] = 0x5fff87,
+	[ 84] = 0x5fffaf,
+	[ 85] = 0x5fffd7,
+	[ 86] = 0x5fffff,
+	[ 87] = 0x870000,
+	[ 88] = 0x87005f,
+	[ 89] = 0x870087,
+	[ 90] = 0x8700af,
+	[ 91] = 0x8700d7,
+	[ 92] = 0x8700ff,
+	[ 93] = 0x875f00,
+	[ 94] = 0x875f5f,
+	[ 95] = 0x875f87,
+	[ 96] = 0x875faf,
+	[ 97] = 0x875fd7,
+	[ 98] = 0x875fff,
+	[99] = 0x878700,
+	[100] = 0x87875f,
+	[101] = 0x878787,
+	[102] = 0x8787af,
+	[103] = 0x8787d7,
+	[104] = 0x8787ff,
+	[105] = 0x87af00,
+	[106] = 0x87af5f,
+	[107] = 0x87af87,
+	[108] = 0x87afaf,
+	[109] = 0x87afd7,
+	[110] = 0x87afff,
+	[111] = 0x87d700,
+	[112] = 0x87d75f,
+	[113] = 0x87d787,
+	[114] = 0x87d7af,
+	[115] = 0x87d7d7,
+	[116] = 0x87d7ff,
+	[117] = 0x87ff00,
+	[118] = 0x87ff5f,
+	[119] = 0x87ff87,
+	[120] = 0x87ffaf,
+	[121] = 0x87ffd7,
+	[122] = 0x87ffff,
+	[123] = 0xaf0000,
+	[124] = 0xaf005f,
+	[125] = 0xaf0087,
+	[126] = 0xaf00af,
+	[127] = 0xaf00d7,
+	[128] = 0xaf00ff,
+	[129] = 0xaf5f00,
+	[130] = 0xaf5f5f,
+	[131] = 0xaf5f87,
+	[132] = 0xaf5faf,
+	[133] = 0xaf5fd7,
+	[134] = 0xaf5fff,
+	[135] = 0xaf8700,
+	[136] = 0xaf875f,
+	[137] = 0xaf8787,
+	[138] = 0xaf87af,
+	[139] = 0xaf87d7,
+	[140] = 0xaf87ff,
+	[141] = 0xafaf00,
+	[142] = 0xafaf5f,
+	[143] = 0xafaf87,
+	[144] = 0xafafaf,
+	[145] = 0xafafd7,
+	[146] = 0xafafff,
+	[147] = 0xafd700,
+	[148] = 0xafd75f,
+	[149] = 0xafd787,
+	[150] = 0xafd7af,
+	[151] = 0xafd7d7,
+	[152] = 0xafd7ff,
+	[153] = 0xafff00,
+	[154] = 0xafff5f,
+	[155] = 0xafff87,
+	[156] = 0xafffaf,
+	[157] = 0xafffd7,
+	[158] = 0xafffff,
+	[159] = 0xd70000,
+	[160] = 0xd7005f,
+	[161] = 0xd70087,
+	[162] = 0xd700af,
+	[163] = 0xd700d7,
+	[164] = 0xd700ff,
+	[165] = 0xd75f00,
+	[166] = 0xd75f5f,
+	[167] = 0xd75f87,
+	[168] = 0xd75faf,
+	[169] = 0xd75fd7,
+	[170] = 0xd75fff,
+	[171] = 0xd78700,
+	[172] = 0xd7875f,
+	[173] = 0xd78787,
+	[174] = 0xd787af,
+	[175] = 0xd787d7,
+	[176] = 0xd787ff,
+	[177] = 0xd7af00,
+	[178] = 0xd7af5f,
+	[179] = 0xd7af87,
+	[180] = 0xd7afaf,
+	[181] = 0xd7afd7,
+	[182] = 0xd7afff,
+	[183] = 0xd7d700,
+	[184] = 0xd7d75f,
+	[185] = 0xd7d787,
+	[186] = 0xd7d7af,
+	[187] = 0xd7d7d7,
+	[188] = 0xd7d7ff,
+	[189] = 0xd7ff00,
+	[190] = 0xd7ff5f,
+	[191] = 0xd7ff87,
+	[192] = 0xd7ffaf,
+	[193] = 0xd7ffd7,
+	[194] = 0xd7ffff,
+	[195] = 0xff0000,
+	[196] = 0xff005f,
+	[197] = 0xff0087,
+	[198] = 0xff00af,
+	[199] = 0xff00d7,
+	[200] = 0xff00ff,
+	[201] = 0xff5f00,
+	[202] = 0xff5f5f,
+	[203] = 0xff5f87,
+	[204] = 0xff5faf,
+	[205] = 0xff5fd7,
+	[206] = 0xff5fff,
+	[207] = 0xff8700,
+	[208] = 0xff875f,
+	[209] = 0xff8787,
+	[210] = 0xff87af,
+	[211] = 0xff87d7,
+	[212] = 0xff87ff,
+	[213] = 0xffaf00,
+	[214] = 0xffaf5f,
+	[215] = 0xffaf87,
+	[216] = 0xffafaf,
+	[217] = 0xffafd7,
+	[218] = 0xffafff,
+	[219] = 0xffd700,
+	[220] = 0xffd75f,
+	[221] = 0xffd787,
+	[222] = 0xffd7af,
+	[223] = 0xffd7d7,
+	[224] = 0xffd7ff,
+	[225] = 0xffff00,
+	[226] = 0xffff5f,
+	[227] = 0xffff87,
+	[228] = 0xffffaf,
+	[229] = 0xffffd7,
+	[230] = 0xffffff,
+
+	/* greyscale */
+	[231] = 0x080808,
+	[232] = 0x121212,
+	[233] = 0x1c1c1c,
+	[234] = 0x262626,
+	[235] = 0x303030,
+	[236] = 0x3a3a3a,
+	[237] = 0x444444,
+	[238] = 0x4e4e4e,
+	[239] = 0x585858,
+	[240] = 0x606060,
+	[241] = 0x666666,
+	[242] = 0x767676,
+	[243] = 0x808080,
+	[244] = 0x8a8a8a,
+	[245] = 0x949494,
+	[246] = 0x9e9e9e,
+	[247] = 0xa8a8a8,
+	[248] = 0xb2b2b2,
+	[249] = 0xbcbcbc,
+	[250] = 0xc6c6c6,
+	[251] = 0xd0d0d0,
+	[252] = 0xdadada,
+	[253] = 0xe4e4e4,
+	[254] = 0xeeeeee,
 };
 
+/* protos */
 void clrscr();
-void xt_rectfill(int, int);
+void xcb_printf(char *, ...);
 
 
 static xcb_connection_t *conn;
@@ -364,6 +398,24 @@ xcb_poly_text_16_simple(xcb_connection_t *c, xcb_drawable_t drawable,
 }
 
 void
+cursormv(int dir) {
+	switch (dir) {
+	case UP:
+		term.cursor.y--;
+		break;
+	case DOWN:
+		term.cursor.y++;
+		break;
+	case RIGHT:
+		term.cursor.x++;
+		break;
+	case LEFT:
+		term.cursor.x--;
+		break;
+	}
+}
+
+void
 set_fg(int fg) {
 	uint32_t mask;
 	uint32_t values[3];
@@ -387,8 +439,8 @@ set_bg(int bg) {
 }
 
 void
-set_color_fg(int c) {
-	set_fg(colors[c]);
+set_color_fg(uint8_t c) {
+	set_fg(colors[c - 1]);
 }
 
 void
@@ -416,13 +468,20 @@ redraw() {
 				}
 
 				xcb_poly_text_16_simple(conn, win, gc,
-						(term.padding * 2) + ((x + 1) * font->width),
-						(term.padding * 2) + ((y + 1) * font->height),
+						term.padding + ((x + 1) * font->width),
+						term.padding + ((y + 1) * font->height),
 						1, &term.map[x + (y * term.width)].ch
 				);
 			}
 		}
 	}
+
+	//uint16_t curschr = '_';
+	//xcb_poly_text_16_simple(conn, win, gc,
+	//		term.padding + ((term.cursor.x + 1) * font->width),
+	//		term.padding + ((term.cursor.y + 1) * font->height),
+	//		1, &curschr
+	//);
 
 	xcb_flush(conn);
 	return 0;
@@ -499,6 +558,8 @@ load_font(xcb_gcontext_t gc, const char *name) {
 	xcb_change_gc(conn, gc, XCB_GC_FONT, &font);
 
 	DEBUG("loaded font '%s'", term.fontline);
+
+	free(font_info);
 	return r;
 }
 
@@ -557,22 +618,6 @@ set_cell(int x, int y, char *str) {
 	term.map[x + (y * term.width)].fg = term.fi;
 }
 
-void
-xt_rectfill(int x, int y) {
-	xcb_rectangle_t rect;
-	int rx, ry;
-
-	rx = x * font->width;
-	ry = y * font->height;
-
-	rect.x = rx;
-	rect.y = ry;
-	rect.width = font->width;
-	rect.height = font->height;
-
-	xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
-}
-
 int
 valid_xy(int x, int y) {
 	if (x > term.width || x < 0)
@@ -602,14 +647,9 @@ sgr(char *buf, size_t n) {
 
 	n -= 2;
 
-	DEBUG("'%s'", p);
-
 	while (sscanf(p, "%u", &c)) {
-		DEBUG("in loop (c:%d)", c);
-
 		switch (c) {
 		case 0:
-			DEBUG("resetting colors");
 			term.attr = term.bi = term.fi = 0;
 			break;
 		case 1:
@@ -623,7 +663,6 @@ sgr(char *buf, size_t n) {
 		case 35:
 		case 36:
 		case 37:
-			DEBUG("setting fg to %d", c - 30);
 			term.fi =  term.attr & BOLD ? c - 30 + 8 : c - 30;
 			break;
 		case 38:
@@ -646,10 +685,8 @@ sgr(char *buf, size_t n) {
 
 		if (longfmt) {
 			int r, g, b, f1, f2, f3, ret;
-			DEBUG("longfmt");
 
 			if (sscanf(p, "%u;%u;%u;%u;%u;%u", &f1, &f2, &f3, &r, &g, &b) > 1) {
-				DEBUG("sscanf match");
 
 				if (f1 != 38)
 					return;
@@ -660,7 +697,6 @@ sgr(char *buf, size_t n) {
 					break;
 				case 5:
 					/* 256 */
-					DEBUG("setting 256 fg to %d", f3);
 					term.fi = f3;
 					break;
 				}
@@ -682,14 +718,10 @@ csiseq(char *esc, size_t n) {
 	if (p[1] != '[')
 		return;
 
-	DEBUG("csi length %ld, type '%c'", n, p[n]);
+	p += 2;
 
-	*p++;
-	*p++;
-	//*p += 2;
-
-	for (int i = 0; i < n; i++)
-		DEBUG("%d: %lc", i, p[i]);
+	//for (int i = 0; i < n; i++)
+	//	DEBUG("%d: %lc", i, p[i]);
 
 	switch (p[n]) {
 	case 'J': {
@@ -736,6 +768,29 @@ csiseq(char *esc, size_t n) {
 			term.cursor.y = row - 1;
 		}
 	}	break;
+	case 'A':
+	case 'B':
+	case 'C':
+	case 'D': {
+		int s;
+
+		switch (p[n]) {
+		case 'A':
+		case 'B':
+		case 'C':
+		case 'D':
+			cursormv(p[n]);
+			break;
+		}
+
+		if (p[n] == 'A')
+			term.cursor.y--;
+
+		if (sscanf(p, "%d", &s))
+			while (s--)
+				cursormv(p[n]);
+
+	}	break;
 	case 'm': {
 		/* sgr */
 		int c;
@@ -745,7 +800,6 @@ csiseq(char *esc, size_t n) {
 			if (p[i] == ';')
 				c++;
 
-		DEBUG("%d", c);
 		sgr(p, c);
 	}	break;
 	default:
@@ -814,6 +868,10 @@ xcb_printf(char *fmt, ...) {
 
 			xcb_printf("%*s", i, "");
 		 }	break;
+		case '\b':
+			term.cursor.x--;
+			set_cell(term.cursor.x, term.cursor.y, " ");
+			break;
 		case '\r':
 			term.cursor.x = 0;
 			break;
@@ -842,8 +900,8 @@ resize(int x, int y) {
 	struct tattr *rmap;
 	int i;
 
-	values[0] = font->width * (x - 1);
-	values[1] = font->height * (y - 1);
+	values[0] = (term.padding * 2) + font->width * (x - 1);
+	values[1] = (term.padding * 2) + font->height * (y - 1);
 
 	xcb_configure_window(conn, win, mask, values);
 
@@ -851,7 +909,7 @@ resize(int x, int y) {
 	if (rmap == NULL)
 		err(1, "malloc");
 
-	memset(rmap, 0, x * y * sizeof(uint16_t));
+	memset(rmap, 0, x * y * sizeof(*rmap));
 
 	FOREACH_CELL(i)
 		term.map[i].bg = term.map[i].fg = -1;
@@ -899,58 +957,69 @@ load_config() {
 			free(xrm_buf);
 		}
 	}
+
+	xcb_xrm_database_free(db);
 }
 
 void
 clrscr() {
 	xcb_clear_area(conn, 0, win, 0, 0,
-			term.width * font->width,
-			term.height * font->height
+			(term.padding * 2) + term.width * font->width,
+			(term.padding * 2) + term.height * font->height
 	);
 }
 
-static char wdata[BUFSIZ];
-static char *wdatap = wdata;
 void
-keypress(xcb_keycode_t keycode, xcb_keysym_t keysym) {
+keypress(xcb_keycode_t keycode, uint16_t state) {
+	xcb_keysym_t keysym;
+	xcb_keysym_t key;
+
+	keysym = xcb_get_keysym(keycode, state);
+	key = xcb_get_keysym(keycode, 0);
+
+	if (state & XCB_MOD_MASK_CONTROL) {
+		DEBUG("ctrl + %lc (%d)", key, key - 0x60);
+
+		if (isalpha(key))
+			dprintf(d, "%lc", key - 0x60);
+
+		return;
+	}
+
 	switch (keysym) {
-	case (0xffe2):
-	case (0xffe4):
-	case (0xfe03):
-	case (0xffe9):
-	case (0xffe3):
-	case (0xffe1):
+	case XK_Alt_L:
+	case XK_Alt_R:
+	case XK_Super_L:
+	case XK_Super_R:
+	case XK_Shift_L:
+	case XK_Shift_R:
+	case XK_Hyper_L:
+	case XK_Hyper_R:
+	case XK_Control_L:
+	case XK_Control_R:
 		/* lone modifiers, do nothing */
 		break;
 	case XK_Tab:
+		dprintf(d, "\t");
 		break;
-	case 0x1b3: /* ^L */
-		clrscr();
-		redraw();
+	case XK_Up:
+		dprintf(d, "\033OA");
 		break;
-	case (0xff0d): /* enter */
-		*wdatap++ = '\n';
-		write(d, &wdata, wdatap - wdata);
-		memset(wdata, 0, wdatap - wdata);
-		wdatap = wdata;
-		term.cursor.y++;
-		term.cursor.x = 0;
-		//strcpy(wdata, "1+1\n");
-		//write(d, &wdata, 4);
+	case XK_Down:
+		dprintf(d, "\033OB");
 		break;
 	case XK_BackSpace: /* backspace */
-		puts("backspace");
-		if (wdatap == wdata)
-			break;
-
-		*wdatap-- = 0;
-		term.cursor.x--;
-		set_cell(term.cursor.x, term.cursor.y, "  ");
+		//term.cursor.x--;
+		//set_cell(term.cursor.x, term.cursor.y, "  ");
+		dprintf(d, "\b");
+		break;
+	case XK_Return:
+		dprintf(d, "\n");
 		break;
 	default:
-		xcb_printf("%lc", keysym);
+		//xcb_printf("%lc", keysym);
 		//DEBUG("unknown keysym: '%lc' (0x%x)", keysym, keysym);
-		*wdatap++ = keysym;
+		dprintf(d, "%lc", keysym);
 		break;
 	}
 }
@@ -980,7 +1049,7 @@ main(int argc, char **argv) {
 	/* defaults */
 	term.bg = term.default_bg = 0x000000;
 	term.fg = term.default_fg = 0xFFFFFF;
-	term.padding = -2;
+	term.padding = 5;
 	term.cursor_char = 0x2d4a;
 	term.wants_redraw = 1;
 	strncpy(term.fontline, "-*-gohufont-medium-*-*-*-11-*-*-*-*-*-*-1", BUFSIZ);
@@ -1051,18 +1120,16 @@ main(int argc, char **argv) {
 	if (pid == 0) {
 		/* child */
 		char *args[] = { "sh", NULL };
-		execvp("/bin/sh", args);
+		term.shell = getenv("SHELL");
+		execvp(term.shell == NULL ? SHELL : term.shell, args);
 	} else {
 		/* parent */
 		fds[0].fd = d;
 		fds[0].events = POLLIN | POLLPRI;
 
 		tcgetattr(d, &tio);
-		tio.c_lflag &= ~ECHO;
 		tcsetattr(d, TCSAFLUSH, &tio);
-
 	}
-
 
 	for (;;) {
 		struct winsize ws;
@@ -1100,7 +1167,7 @@ main(int argc, char **argv) {
 		} break;
 		case XCB_KEY_PRESS: {
 			xcb_key_press_event_t *e = (xcb_key_press_event_t *)ev;
-			keypress(e->detail, xcb_get_keysym(e->detail, e->state));
+			keypress(e->detail, e->state);
 			term.wants_redraw = 1;
 		} break;
 		default:
