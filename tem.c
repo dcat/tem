@@ -519,14 +519,22 @@ again:
 
 			break;
 		case 2:
-			for (i = term.cursor.x; i > term.width; i++)
+			for (i = term.cursor.x; i < term.width; i++)
 				set_cell(i, term.cursor.y, " ");
 
 			break;
 		}
 	}	break;
-	case 'M': /* delete n lines DL? */
-		break;
+	case 'M': {/* delete n lines DL? */
+		int s, i;
+
+		if (sscanf(p, "%dM", &s) < 1)
+			s = 1;
+
+		for (i = 0; i < term.width; i++)
+			set_cell(i, s, " ");
+
+	}	break;
 	case 'S': /* SU scroll up */
 	case 'T': /* SD scroll down */
 		  break;
@@ -562,6 +570,26 @@ again:
 	}	break;
 	case 's': /* SCP save cursor position */
 	case 'u': /* RCP restore cursor position */
+		break;
+	case 'd': {
+		int s;
+
+		if (sscanf(p, "%d", &s) < 0)
+			s = 1;
+
+		term.cursor.y = s;
+	}	break;
+	case 'L': {
+		int s, i;
+
+		if (sscanf(p, "%dL", &s))
+			s = 1;
+
+		for (i = 0; i < s; i++)
+			xcb_printf("\n");
+	}	break;
+	case '@':
+		xcb_printf(" ");
 		break;
 	default:
 		DEBUG("unknown escape type: '%lc' (0x%x)", p[n], p[n]);
