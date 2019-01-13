@@ -58,8 +58,6 @@ typedef struct term_s {
 	int fg, bg;
 	int default_fg, default_bg;
 	struct xt_cursor cursor;
-	/* uint16_t *map, map_curs; */
-	uint16_t map_curs;
 	struct tattr *map;
 	int padding;
 	uint16_t cursor_char;
@@ -69,6 +67,7 @@ typedef struct term_s {
 	uint8_t fi, bi, attr;
 	char *shell;
 	char cursor_vis;
+	char ttydead;
 } term_t;
 
 uint32_t colors[255] = {
@@ -518,10 +517,8 @@ cursor_next(struct xt_cursor *curs) {
 	} else
 		curs->x++;
 
-	if (curs->y + 1 > term.height)
+	if (curs->y + 0 >= term.height)
 		scroll(+1);
-
-	term.map_curs = curs->x + (curs->y * term.width);
 }
 
 static xcb_keysym_t
@@ -627,10 +624,21 @@ void
 set_cell(int x, int y, char *str) {
 	uint16_t c;
 	uint8_t *utf = (uint8_t *)str;
+	off_t pos;
+
+	pos = x + (y * term.width);
+	if (pos < 0) {
+		DEBUG("OUT OF BOUNDS!, negative; trying to write to x:%d y:%d", x, y);
+		return;
+	}
+	if (pos > term.width * term.height) {
+		DEBUG("OUT OF BOUNDS!, positive; trying to write to x:%d y:%d", x, y);
+		return;
+	}
 
 	c = utf_combine(str);
-	term.map[x + (y * term.width)].ch = c;
-	term.map[x + (y * term.width)].fg = term.fi;
+	term.map[pos].ch = c;
+	term.map[pos].fg = term.fi;
 }
 
 int
@@ -735,8 +743,6 @@ csiseq(char *esc, size_t n) {
 
 	p += 2;
 
-	//for (int i = 0; i < n; i++)
-	//	DEBUG("%d: %lc", i, p[i]);
 again:
 	switch (p[n]) {
 	case 'A':
@@ -808,6 +814,8 @@ again:
 	case 'J': {
 		uint16_t *off;
 		off_t len;
+		struct tattr *mp;
+		mp = term.map + term.cursor.x + (term.cursor.y * term.width);
 
 		DEBUG("clear screen?");
 		switch (p[0]) {
@@ -815,16 +823,20 @@ again:
 			/* clear screen and wipe scrollback */
 		case '2':
 			/* clear entire screen */
-		case '1':
-			/* clear from cursor to beginning of screen */
-		case 'J':
-		case '0':
-			/* clear from cursor to end of screen (default) */
-
-			/* XXX */
-			DEBUG("clearing screen");
 			memset(term.map, 0, term.width * term.height * sizeof(*term.map));
 			term.cursor.x = term.cursor.y = 0;
+			break;
+		case '1': {
+			/* clear from cursor to beginning of screen */
+			while (mp-- != term.map)
+				mp->ch = mp->fg = mp->bg = mp->attr = 0;
+
+		}	break;
+		case '0':
+			/* clear from cursor to end of screen (default) */
+			while (mp++ != term.map + (term.width * term.height))
+				mp->ch = mp->fg = mp->bg = mp->attr = 0;
+
 			break;
 		}
 	}	break;
@@ -835,18 +847,22 @@ again:
 	case 'f':
 		p[n] = 'H';
 		goto again;
-	case 'h': /* show cursor */
-		DEBUG("show cursor");
-		if (p[1] == '2' && p[2] == '5')
-			term.cursor_vis = 1;
+	case 'l':
+	case 'h': {
+		int s;
 
-		break;
-	case 'l': /* hide cursor */
-		DEBUG("hide cursor");
-		if (p[1] == '2' && p[2] == '5')
-			term.cursor_vis = 0;
+		sscanf(p, "?%d", &s);
 
-		break;
+		switch (s) {
+		case 25: /* show or hide cursor */
+			term.cursor_vis = p[n] == 'h';
+			break;
+		case 1049: /* alternative screen buffer */
+		case 2004: /* bracketed paste mode */
+			break;
+		}
+
+	}	break;
 	case 'm': {
 		/* sgr */
 		int c;
@@ -883,11 +899,9 @@ xcb_printf(char *fmt, ...) {
 
 	while (*p) {
 		if (term.esc) {
-			DEBUG("%ld %c", p - buf, *p);
+			//DEBUG("%ld %c", p - buf, *p);
 
-			if (p - buf == 1 && *p == '[')
-				;
-			else
+			if (p - buf != 1 && *p != '[')
 				switch (*p) {
 				case '0':
 				case '1':
@@ -907,7 +921,6 @@ xcb_printf(char *fmt, ...) {
 				case '[':
 					break;
 				default:
-					DEBUG("csilen: %zd", n);
 					csiseq(term.esc_str, n);
 					term.esc = 0;
 					break;
@@ -945,7 +958,8 @@ xcb_printf(char *fmt, ...) {
 			n = 0;
 			break;
 		default:
-			set_cell(term.cursor.x, term.cursor.y, p);
+			if (valid_xy(term.cursor.x, term.cursor.y))
+				set_cell(term.cursor.x, term.cursor.y, p);
 			cursor_next(&term.cursor);
 			break;
 		}
@@ -966,7 +980,7 @@ resize(int x, int y) {
 
 	xcb_configure_window(conn, win, mask, values);
 
-	rmap = malloc(sizeof(struct tattr) * (x * y));
+	rmap = malloc(sizeof(struct tattr) * (x * (y + 1)));
 	if (rmap == NULL)
 		err(1, "malloc");
 
@@ -980,7 +994,7 @@ resize(int x, int y) {
 		free(term.map);
 	}
 
-	term.width = x - 1;
+	term.width = x;
 	term.height = y - 1;
 	term.map = rmap;
 }
@@ -1093,10 +1107,8 @@ keypress(xcb_keycode_t keycode, uint16_t state) {
 
 void
 cleanup() {
-	xcb_disconnect(conn);
-	free(term.map);
-	free(font);
-	_exit(0);
+	DEBUG("cleanup");
+	term.ttydead = 1;
 }
 
 int
@@ -1116,12 +1128,13 @@ main(int argc, char **argv) {
 	/* defaults */
 	term.bg = term.default_bg = 0x000000;
 	term.fg = term.default_fg = 0xFFFFFF;
-	term.padding = 5;
+	term.padding = 1;
 	term.cursor_char = 0x2d4a;
 	term.wants_redraw = 1;
 	strncpy(term.fontline, "-*-gohufont-medium-*-*-*-11-*-*-*-*-*-*-1", BUFSIZ);
 	term.fi = term.bi = 0;
 	term.cursor_vis = 1;
+	term.ttydead = 0;
 
 	(void)setlocale(LC_ALL, "");
 
@@ -1161,10 +1174,6 @@ main(int argc, char **argv) {
 
 	xcb_flush(conn);
 	atexit(cleanup);
-	signal(SIGCHLD, cleanup);
-
-	set_color_fg(13);
-	xcb_flush(conn);
 
 	xcb_generic_event_t *ev;
 	int s;
@@ -1185,11 +1194,15 @@ main(int argc, char **argv) {
 	if (pid < 0)
 		err(1, "forkpty");
 
+	signal(SIGCHLD, cleanup);
+
 	if (pid == 0) {
 		/* child */
 		char *args[] = { "sh", NULL };
 		term.shell = getenv("SHELL");
 		execvp(term.shell == NULL ? SHELL : term.shell, args);
+		cleanup();
+		exit(0);
 	} else {
 		/* parent */
 		fds[0].fd = d;
@@ -1199,11 +1212,9 @@ main(int argc, char **argv) {
 		tcsetattr(d, TCSAFLUSH, &tio);
 	}
 
-	for (;;) {
+	while (!term.ttydead) {
 		struct winsize ws;
 		pid_t pid;
-
-		/* select */
 
 		ev = xcb_poll_for_event(conn);
 		if (ev == NULL) {
@@ -1223,25 +1234,28 @@ main(int argc, char **argv) {
 
 				if (term.wants_redraw)
 					term.wants_redraw = redraw();
-
-				continue;
+			}
+		} else {
+			switch (ev->response_type & ~0x80) {
+			case XCB_EXPOSE: {
+				/* setup stuff */
+				term.wants_redraw = 1;
+			} break;
+			case XCB_KEY_PRESS: {
+				xcb_key_press_event_t *e = (xcb_key_press_event_t *)ev;
+				keypress(e->detail, e->state);
+				term.wants_redraw = 1;
+			} break;
+			default:
+				DEBUG("unknown event %d", ev->response_type & ~0x80);
 			}
 		}
-
-		switch (ev->response_type & ~0x80) {
-		case XCB_EXPOSE: {
-			/* setup stuff */
-			term.wants_redraw = 1;
-		} break;
-		case XCB_KEY_PRESS: {
-			xcb_key_press_event_t *e = (xcb_key_press_event_t *)ev;
-			keypress(e->detail, e->state);
-			term.wants_redraw = 1;
-		} break;
-		default:
-			DEBUG("unknown event %d", ev->response_type & ~0x80);
-		}
 	}
+
+	DEBUG("out of the loop");
+	xcb_disconnect(conn);
+	free(term.map);
+	free(font);
 
 	return 0;
 }
