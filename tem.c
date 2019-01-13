@@ -338,6 +338,7 @@ uint32_t colors[255] = {
 /* protos */
 void clrscr();
 void xcb_printf(char *, ...);
+int valid_xy(int, int);
 
 
 static xcb_connection_t *conn;
@@ -401,16 +402,20 @@ void
 cursormv(int dir) {
 	switch (dir) {
 	case UP:
-		term.cursor.y--;
+		if (valid_xy(term.cursor.x, term.cursor.y - 1))
+			term.cursor.y--;
 		break;
 	case DOWN:
-		term.cursor.y++;
+		if (valid_xy(term.cursor.x, term.cursor.y + 1))
+			term.cursor.y++;
 		break;
 	case RIGHT:
-		term.cursor.x++;
+		if (valid_xy(term.cursor.x + 1, term.cursor.y))
+			term.cursor.x++;
 		break;
 	case LEFT:
-		term.cursor.x--;
+		if (valid_xy(term.cursor.x - 1, term.cursor.y))
+			term.cursor.x--;
 		break;
 	}
 }
@@ -482,6 +487,13 @@ redraw() {
 	//		term.padding + ((term.cursor.y + 1) * font->height),
 	//		1, &curschr
 	//);
+	set_fg(term.default_fg);
+	xcb_rectangle_t rect;
+	rect.x = ((term.cursor.x + 1) * font->width)  + term.padding;
+	rect.y = (term.cursor.y * font->height) + term.padding + 2;
+	rect.width = font->width;
+	rect.height = font->height;
+	xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
 
 	xcb_flush(conn);
 	return 0;
@@ -722,8 +734,74 @@ csiseq(char *esc, size_t n) {
 
 	//for (int i = 0; i < n; i++)
 	//	DEBUG("%d: %lc", i, p[i]);
-
+again:
 	switch (p[n]) {
+	case 'A':
+	case 'B':
+	case 'C':
+	case 'D': {
+		int s;
+
+		switch (p[n]) {
+		case 'A':
+		case 'B':
+		case 'C':
+		case 'D':
+			cursormv(p[n]);
+			break;
+		}
+
+		if (sscanf(p, "%d", &s))
+			while (s--)
+				cursormv(p[n]);
+
+	}	break;
+	case 'E':
+	case 'F': {
+		int s;
+
+		if (!sscanf(p, "%u", &s))
+			s = 1;
+
+		if (p[n] == 'E') {
+			if (valid_xy(term.cursor.x, term.cursor.y + s))
+				term.cursor.y += s;
+		} else if (p[n] == 'F')
+			if (valid_xy(term.cursor.x, term.cursor.y - s))
+				term.cursor.y -= s;
+
+		term.cursor.x = 0;
+	}	break;
+	case 'G': {
+		int s;
+
+		if (!sscanf(p, "%u", &s))
+			s = 1;
+
+		if (valid_xy(s, term.cursor.y))
+			term.cursor.x = s;
+	}	break;
+	case 'H': {
+		/* CUP: n ; m H */
+		unsigned int row, col;
+
+		row = col = 0;
+
+		if (memchr(p, ';', n)) {
+			/* n + m */
+			sscanf(p, "%u:%u", &row, &col);
+			DEBUG("cup(%d, %d);", col, row);
+		} else {
+			/* n only */
+			DEBUG("cup(0, %d);", row);
+			sscanf(p, "%u", &row);
+		}
+
+		if (valid_xy(col, row)) {
+			term.cursor.x = col - 1;
+			term.cursor.y = row - 1;
+		}
+	}	break;
 	case 'J': {
 		uint16_t *off;
 		off_t len;
@@ -747,50 +825,13 @@ csiseq(char *esc, size_t n) {
 			break;
 		}
 	}	break;
-	case 'H': {
-		/* CUP: n ; m H */
-		unsigned int row, col;
-
-		row = col = 0;
-
-		if (memchr(p, ';', n)) {
-			/* n + m */
-			sscanf(p, "%u:%u", &row, &col);
-			DEBUG("cup(%d, %d);", col, row);
-		} else {
-			/* n only */
-			DEBUG("cup(0, %d);", row);
-			sscanf(p, "%u", &row);
-		}
-
-		if (valid_xy(row, col)) {
-			term.cursor.x = col - 1;
-			term.cursor.y = row - 1;
-		}
-	}	break;
-	case 'A':
-	case 'B':
-	case 'C':
-	case 'D': {
-		int s;
-
-		switch (p[n]) {
-		case 'A':
-		case 'B':
-		case 'C':
-		case 'D':
-			cursormv(p[n]);
-			break;
-		}
-
-		if (p[n] == 'A')
-			term.cursor.y--;
-
-		if (sscanf(p, "%d", &s))
-			while (s--)
-				cursormv(p[n]);
-
-	}	break;
+	case 'K': /* EL erase in line */
+	case 'S': /* SU scroll up */
+	case 'T': /* SD scroll down */
+		  break;
+	case 'f':
+		p[n] = 'H';
+		goto again;
 	case 'm': {
 		/* sgr */
 		int c;
@@ -802,6 +843,9 @@ csiseq(char *esc, size_t n) {
 
 		sgr(p, c);
 	}	break;
+	case 's': /* SCP save cursor position */
+	case 'u': /* RCP restore cursor position */
+		break;
 	default:
 		DEBUG("unknown escape type: '%lc' (0x%x)", p[n], p[n]);
 		break;
