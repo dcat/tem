@@ -465,12 +465,10 @@ redraw() {
 			i = x + (y * term.width);
 
 			if (term.map[i].ch) {
-				if (term.map[i].fg) {
-					if (term.map[i].fg != term.fg)
-						set_color_fg(term.map[i].fg);
-				} else {
+				if (term.map[i].fg && term.map[i].fg != term.fg)
+					set_color_fg(term.map[i].fg);
+				else
 					set_fg(term.default_fg);
-				}
 
 				xcb_poly_text_16_simple(conn, win, gc,
 						term.padding + ((x + 1) * font->width),
@@ -481,12 +479,6 @@ redraw() {
 		}
 	}
 
-	//uint16_t curschr = '_';
-	//xcb_poly_text_16_simple(conn, win, gc,
-	//		term.padding + ((term.cursor.x + 1) * font->width),
-	//		term.padding + ((term.cursor.y + 1) * font->height),
-	//		1, &curschr
-	//);
 	if (term.cursor_vis) {
 		set_fg(term.default_fg);
 		xcb_rectangle_t rect;
@@ -512,12 +504,11 @@ void
 cursor_next(struct xt_cursor *curs) {
 	if (curs->x + 1 >= term.width) {
 		curs->y++;
-
 		curs->x = 0;
 	} else
 		curs->x++;
 
-	if (curs->y + 0 >= term.height)
+	if (curs->y >= term.height)
 		scroll(+1);
 }
 
@@ -546,16 +537,12 @@ load_font(xcb_gcontext_t gc, const char *name) {
 	font = xcb_generate_id(conn);
 
 	cookie = xcb_open_font_checked(conn, font, strlen(name), name);
-	if (xcb_request_check(conn, cookie)) {
-		warnx("could not load font '%s'", name);
-		return NULL;
-	}
+	if (xcb_request_check(conn, cookie))
+		err(1, "could not load font '%s'", name);
 
 	r = malloc(sizeof(struct font_s));
-	if (r == NULL) {
-		warn("malloc");
-		return NULL;
-	}
+	if (r == NULL)
+		err(1, "malloc");
 
 	queryreq = xcb_query_font(conn, font);
 	font_info = xcb_query_font_reply(conn, queryreq, NULL);
@@ -643,7 +630,7 @@ set_cell(int x, int y, char *str) {
 
 int
 valid_xy(int x, int y) {
-	if (x > term.width || x < 0)
+	if (x + 2 >= term.width || x < 0)
 		return 0;
 
 	if (y > term.height || y < 0)
@@ -716,7 +703,7 @@ sgr(char *buf, size_t n) {
 
 				switch (f2) {
 				case 2:
-					/* rgb */
+					/* XXX: rgb */
 					break;
 				case 5:
 					/* 256 */
@@ -784,7 +771,7 @@ again:
 	case 'G': {
 		int s;
 
-		if (!sscanf(p, "%u", &s))
+		if (!sscanf(p, "%d", &s))
 			s = 1;
 
 		if (valid_xy(s, term.cursor.y))
@@ -792,23 +779,18 @@ again:
 	}	break;
 	case 'H': {
 		/* CUP: n ; m H */
-		unsigned int row, col;
+		int row, col;
 
 		row = col = 0;
 
-		if (memchr(p, ';', n)) {
-			/* n + m */
-			sscanf(p, "%u:%u", &row, &col);
-			DEBUG("cup(%d, %d);", col, row);
-		} else {
-			/* n only */
-			DEBUG("cup(0, %d);", row);
+		if (memchr(p, ';', n)) /* n + m */
+			sscanf(p, "%d:%d", &row, &col);
+		else /* n only */
 			sscanf(p, "%u", &row);
-		}
 
 		if (valid_xy(col, row)) {
-			term.cursor.x = col - 1;
-			term.cursor.y = row - 1;
+			term.cursor.x = col;
+			term.cursor.y = row;
 		}
 	}	break;
 	case 'J': {
@@ -819,28 +801,51 @@ again:
 
 		DEBUG("clear screen?");
 		switch (p[0]) {
-		case '3':
-			/* clear screen and wipe scrollback */
-		case '2':
-			/* clear entire screen */
+		case '3': /* clear screen and wipe scrollback */
+			  /* we don't actually have a scrollback buffer yet */
+		case '2': /* clear entire screen */
 			memset(term.map, 0, term.width * term.height * sizeof(*term.map));
 			term.cursor.x = term.cursor.y = 0;
 			break;
-		case '1': {
-			/* clear from cursor to beginning of screen */
+		case '1': { /* clear from cursor to beginning of screen */
 			while (mp-- != term.map)
 				mp->ch = mp->fg = mp->bg = mp->attr = 0;
 
 		}	break;
-		case '0':
-			/* clear from cursor to end of screen (default) */
+		case 'J': /* no arg */
+		case '0': /* clear from cursor to end of screen (default) */
 			while (mp++ != term.map + (term.width * term.height))
 				mp->ch = mp->fg = mp->bg = mp->attr = 0;
 
 			break;
 		}
 	}	break;
-	case 'K': /* EL erase in line */
+	case 'K': { /* EL erase in line */
+		int s;
+		off_t i, end;
+
+		sscanf(p, "%d", &s);
+		end = term.width - term.cursor.x;
+
+		switch (s) {
+		default:
+		case 0:
+			for (i = term.cursor.x; i < term.width; i++)
+				set_cell(i, term.cursor.y, " ");
+
+			break;
+		case 1:
+			for (i = term.cursor.x; i; i--)
+				set_cell(i, term.cursor.y, " ");
+
+			break;
+		case 2:
+			for (i = term.cursor.x; i > term.width; i++)
+				set_cell(i, term.cursor.y, " ");
+
+			break;
+		}
+	}	break;
 	case 'S': /* SU scroll up */
 	case 'T': /* SD scroll down */
 		  break;
@@ -950,7 +955,8 @@ xcb_printf(char *fmt, ...) {
 			term.cursor.x = 0;
 			break;
 		case '\n':
-			term.cursor.y++;
+			if (valid_xy(term.cursor.x, term.cursor.y + 1))
+				term.cursor.y++;
 			break;
 		case 0x1b:
 			term.esc = 1;
@@ -958,9 +964,10 @@ xcb_printf(char *fmt, ...) {
 			n = 0;
 			break;
 		default:
-			if (valid_xy(term.cursor.x, term.cursor.y))
+			if (valid_xy(term.cursor.x, term.cursor.y)) {
 				set_cell(term.cursor.x, term.cursor.y, p);
-			cursor_next(&term.cursor);
+				cursor_next(&term.cursor);
+			}
 			break;
 		}
 
@@ -985,9 +992,6 @@ resize(int x, int y) {
 		err(1, "malloc");
 
 	memset(rmap, 0, x * y * sizeof(*rmap));
-
-	FOREACH_CELL(i)
-		term.map[i].bg = term.map[i].fg = -1;
 
 	if (term.map != NULL) {
 		memcpy(rmap, term.map, term.width * term.height);
@@ -1119,12 +1123,6 @@ main(int argc, char **argv) {
 	char *p;
 	char *argv0;
 
-	ARGBEGIN {
-	case 'f':
-		strncpy(term.fontline, ARGF(), BUFSIZ);
-		break;
-	} ARGEND
-
 	/* defaults */
 	term.bg = term.default_bg = 0x000000;
 	term.fg = term.default_fg = 0xFFFFFF;
@@ -1166,6 +1164,12 @@ main(int argc, char **argv) {
 	values[0] = 0;
 	gc = xcb_generate_id(conn);
 	xcb_create_gc(conn, gc, win, mask, values);
+
+	ARGBEGIN {
+	case 'f':
+		strncpy(term.fontline, ARGF(), BUFSIZ);
+		break;
+	} ARGEND
 
 	font = load_font(gc, term.fontline);
 	resize(80, 24);
