@@ -68,6 +68,7 @@ typedef struct term_s {
 	char *esc_str;
 	uint8_t fi, bi, attr;
 	char *shell;
+	char cursor_vis;
 } term_t;
 
 uint32_t colors[255] = {
@@ -487,13 +488,15 @@ redraw() {
 	//		term.padding + ((term.cursor.y + 1) * font->height),
 	//		1, &curschr
 	//);
-	set_fg(term.default_fg);
-	xcb_rectangle_t rect;
-	rect.x = ((term.cursor.x + 1) * font->width)  + term.padding;
-	rect.y = (term.cursor.y * font->height) + term.padding + 2;
-	rect.width = font->width;
-	rect.height = font->height;
-	xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
+	if (term.cursor_vis) {
+		set_fg(term.default_fg);
+		xcb_rectangle_t rect;
+		rect.x = ((term.cursor.x + 1) * font->width)  + term.padding;
+		rect.y = (term.cursor.y * font->height) + term.padding + 2;
+		rect.width = font->width;
+		rect.height = font->height;
+		xcb_poly_fill_rectangle(conn, win, gc, 1, &rect);
+	}
 
 	xcb_flush(conn);
 	return 0;
@@ -832,6 +835,18 @@ again:
 	case 'f':
 		p[n] = 'H';
 		goto again;
+	case 'h': /* show cursor */
+		DEBUG("show cursor");
+		if (p[1] == '2' && p[2] == '5')
+			term.cursor_vis = 1;
+
+		break;
+	case 'l': /* hide cursor */
+		DEBUG("hide cursor");
+		if (p[1] == '2' && p[2] == '5')
+			term.cursor_vis = 0;
+
+		break;
 	case 'm': {
 		/* sgr */
 		int c;
@@ -868,7 +883,7 @@ xcb_printf(char *fmt, ...) {
 
 	while (*p) {
 		if (term.esc) {
-			//DEBUG("%ld %c", p - buf, *p);
+			DEBUG("%ld %c", p - buf, *p);
 
 			if (p - buf == 1 && *p == '[')
 				;
@@ -885,12 +900,14 @@ xcb_printf(char *fmt, ...) {
 				case '8':
 				case '9':
 				case ';':
+				case '?':
 					n++;
 					/* accepted characters */
 					break;
 				case '[':
 					break;
 				default:
+					DEBUG("csilen: %zd", n);
 					csiseq(term.esc_str, n);
 					term.esc = 0;
 					break;
@@ -1052,6 +1069,12 @@ keypress(xcb_keycode_t keycode, uint16_t state) {
 	case XK_Down:
 		dprintf(d, "\033OB");
 		break;
+	case XK_Right:
+		dprintf(d, "\033OC");
+		break;
+	case XK_Left:
+		dprintf(d, "\033OD");
+		break;
 	case XK_BackSpace: /* backspace */
 		//term.cursor.x--;
 		//set_cell(term.cursor.x, term.cursor.y, "  ");
@@ -1098,6 +1121,7 @@ main(int argc, char **argv) {
 	term.wants_redraw = 1;
 	strncpy(term.fontline, "-*-gohufont-medium-*-*-*-11-*-*-*-*-*-*-1", BUFSIZ);
 	term.fi = term.bi = 0;
+	term.cursor_vis = 1;
 
 	(void)setlocale(LC_ALL, "");
 
