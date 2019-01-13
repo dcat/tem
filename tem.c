@@ -336,7 +336,6 @@ sgr(char *buf, size_t n) {
 	while (sscanf(p, "%u", &c)) {
 		switch (c) {
 		case 0:
-		case 'm':
 			term.attr = term.bi = term.fi = 0;
 			break;
 		case 1:
@@ -393,6 +392,9 @@ sgr(char *buf, size_t n) {
 		while (*p != ';')
 			(void)*p++;
 	}
+
+	if (*p == 'm')
+		term.attr = term.bi = term.fi = 0;
 }
 
 void
