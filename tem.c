@@ -333,7 +333,7 @@ sgr(char *buf, size_t n) {
 
 	n -= 2;
 
-	while (sscanf(p, "%u", &c)) {
+	while (sscanf(p, "%d", &c)) {
 		switch (c) {
 		case 0:
 			term.attr = term.bi = term.fi = 0;
@@ -467,8 +467,8 @@ again:
 			sscanf(p, "%d", &row);
 
 		if (valid_xy(col, row)) {
-			term.cursor.x = col;
-			term.cursor.y = row;
+			term.cursor.x = col - 1;
+			term.cursor.y = row - 1;
 			term.wants_redraw = 1;
 		}
 	}	break;
@@ -657,15 +657,17 @@ xcb_printf(char *fmt, ...) {
 			xcb_printf("%*s", i, "");
 		 }	break;
 		case '\b':
-			term.cursor.x--;
+			cursormv(LEFT);
+			//term.cursor.x--;
 			set_cell(term.cursor.x, term.cursor.y, " ");
 			break;
 		case '\r':
 			term.cursor.x = 0;
 			break;
 		case '\n':
-			if (valid_xy(term.cursor.x, term.cursor.y + 1))
-				term.cursor.y++;
+			cursormv(DOWN);
+			//if (valid_xy(term.cursor.x, term.cursor.y + 1))
+			//	term.cursor.y++;
 			break;
 		case 0x1b:
 			term.esc = 1;
@@ -804,6 +806,9 @@ keypress(xcb_keycode_t keycode, uint16_t state) {
 	case XK_Tab:
 		dprintf(d, "\t");
 		break;
+	case XK_Escape:
+		dprintf(d, "\033");
+		break;
 	case XK_Up:
 		dprintf(d, "\033OA");
 		break;
@@ -817,8 +822,6 @@ keypress(xcb_keycode_t keycode, uint16_t state) {
 		dprintf(d, "\033OD");
 		break;
 	case XK_BackSpace: /* backspace */
-		//term.cursor.x--;
-		//set_cell(term.cursor.x, term.cursor.y, "  ");
 		dprintf(d, "\b");
 		break;
 	case XK_Return:
@@ -929,6 +932,7 @@ main(int argc, char **argv) {
 		/* child */
 		char *args[] = { "sh", NULL };
 		term.shell = getenv("SHELL");
+		(void)setenv("TERM", "tem-256color", 1);
 		execvp(term.shell == NULL ? SHELL : term.shell, args);
 		cleanup();
 		exit(0);
