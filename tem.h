@@ -42,6 +42,7 @@ typedef struct term_s {
 	int padding;
 	uint16_t cursor_char;
 	char fontline[BUFSIZ];
+	struct xt_cursor redraw_pos;
 	char wants_redraw, esc;
 	char *esc_str;
 	uint8_t fi, bi, attr;

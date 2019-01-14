@@ -75,6 +75,16 @@ xcb_poly_text_16_simple(xcb_connection_t *c, xcb_drawable_t drawable,
 }
 
 void
+clr_cell(int x, int y) {
+	xcb_clear_area(conn, 0, win,
+			(term.padding) + x * font->width,
+			(term.padding) + y * font->height,
+			(term.padding * 2) + term.width * font->width,
+			(term.padding * 2) + term.height * font->height
+	);
+}
+
+void
 cursormv(int dir) {
 	switch (dir) {
 	case UP:
@@ -130,14 +140,18 @@ set_color_bg(int c) {
 }
 
 int
-redraw() {
+redraw(int ln) {
 	int x, y;
 	int i;
 
-	clrscr();
+	term.wants_redraw = 0;
+	clrscr(ln ? ln : 0);
 
 	for (x = 0; x < term.width; x++) {
 		for (y = 0; y < term.height; y++) {
+			if (ln && y != ln)
+				continue;
+
 			i = x + (y * term.width);
 
 			if (term.map[i].ch) {
@@ -173,7 +187,7 @@ scroll(int dir) {
 	/* add first line to history queue */
 	memmove(term.map, term.map + term.width, term.width * term.height * sizeof(*term.map));
 	cursormv(UP);
-	clrscr();
+	clrscr(0);
 }
 
 void
@@ -654,9 +668,11 @@ xcb_printf(char *fmt, ...) {
 			xcb_printf("%*s", i, "");
 		 }	break;
 		case '\b':
+			if (valid_xy(term.cursor.x - 1, term.cursor.y ))
+				clr_cell(term.cursor.x - 1, term.cursor.y);
 			cursormv(LEFT);
 			//term.cursor.x--;
-			set_cell(term.cursor.x, term.cursor.y, " ");
+			//set_cell(term.cursor.x, term.cursor.y, " ");
 			break;
 		case '\r':
 			term.cursor.x = 0;
@@ -749,8 +765,9 @@ load_config() {
 }
 
 void
-clrscr() {
-	xcb_clear_area(conn, 0, win, 0, 0,
+clrscr(int ln) {
+	xcb_clear_area(conn, 0, win, 0,
+			(term.padding) + ln * font->height,
 			(term.padding * 2) + term.width * font->width,
 			(term.padding * 2) + term.height * font->height
 	);
@@ -963,7 +980,7 @@ main(int argc, char **argv) {
 				}
 
 				if (term.wants_redraw)
-					term.wants_redraw = redraw();
+					redraw(n == 1 ? term.cursor.y : 0);
 			}
 		} else {
 			switch (ev->response_type & ~0x80) {
