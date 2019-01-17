@@ -15,7 +15,12 @@
 #include <poll.h>
 #include <err.h>
 
-#include <pty.h> /* XXX */
+#if defined(__FreeBSD__) || defined(__OpenBSD__)
+	#include <libutil.h>
+#elif defined(__linux__)
+	#include <pty.h>
+#endif
+
 #include "arg.h"
 #include "tem.h"
 
