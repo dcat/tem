@@ -695,6 +695,12 @@ xcb_printf(char *fmt, ...) {
 			term.esc_str = p;
 			n = 0;
 			break;
+		case ' ':
+			if (valid_xy(term.cursor.x, term.cursor.y)) {
+				clr_cell(term.cursor.x, term.cursor.y);
+				cursor_next(&term.cursor);
+			}
+			break;
 		default:
 			if (valid_xy(term.cursor.x, term.cursor.y)) {
 				set_cell(term.cursor.x, term.cursor.y, p);
