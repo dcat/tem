@@ -664,6 +664,9 @@ xcb_printf(char *fmt, ...) {
 		}
 
 		switch (*p) {
+		case '\a':
+			/* ignore */
+			break;
 		case '\t': {
 			int i;
 
