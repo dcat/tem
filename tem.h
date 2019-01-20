@@ -38,6 +38,7 @@ typedef struct term_s {
 	int fg, bg;
 	int default_fg, default_bg;
 	struct xt_cursor cursor;
+	struct xt_cursor winsiz;
 	struct tattr *map;
 	int padding;
 	uint16_t cursor_char;
@@ -49,6 +50,7 @@ typedef struct term_s {
 	char *shell;
 	char cursor_vis;
 	char ttydead;
+	pid_t pid;
 } term_t;
 
 uint32_t colors[255] = {

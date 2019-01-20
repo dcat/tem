@@ -321,6 +321,7 @@ set_cell(int x, int y, char *str) {
 	c = utf_combine(str);
 	term.map[pos].ch = c;
 	term.map[pos].fg = term.fi;
+	term.map[pos].bg = term.bi;
 }
 
 int
@@ -679,8 +680,6 @@ xcb_printf(char *fmt, ...) {
 			if (valid_xy(term.cursor.x - 1, term.cursor.y ))
 				clr_cell(term.cursor.x - 1, term.cursor.y);
 			cursormv(LEFT);
-			//term.cursor.x--;
-			//set_cell(term.cursor.x, term.cursor.y, " ");
 			break;
 		case '\r':
 			term.cursor.x = 0;
@@ -718,6 +717,7 @@ resize(int x, int y) {
 	uint32_t values[3];
 	uint32_t mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
 	struct tattr *rmap;
+	struct winsize ws;
 	int i;
 
 	values[0] = (term.padding * 2) + font->width * (x - 1);
@@ -736,9 +736,15 @@ resize(int x, int y) {
 		free(term.map);
 	}
 
-	term.width = x;
+	ws.ws_col = term.width = x;
 	term.height = y - 1;
+	ws.ws_row  = y;
 	term.map = rmap;
+	term.winsiz.x = (term.padding * 2) + font->width * (x - 1);
+	term.winsiz.y = (term.padding * 2) + font->height * (y - 1);
+
+	(void)ioctl(d, TIOCSWINSZ, &ws);
+	(void)kill(term.pid, SIGWINCH);
 }
 
 void
@@ -899,7 +905,7 @@ main(int argc, char **argv) {
 	load_config();
 	mask = XCB_CW_EVENT_MASK;
 	values[0] = XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_KEY_PRESS
-		| XCB_EVENT_MASK_BUTTON_PRESS;
+		| XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_STRUCTURE_NOTIFY;
 
 	win = xcb_generate_id(conn);
 	xcb_create_window (conn,
@@ -928,7 +934,6 @@ main(int argc, char **argv) {
 
 	font = load_font(gc, term.fontline);
 	resize(80, 24);
-	resize(90, 36);
 	set_bg(term.bg);
 	set_fg(term.fg);
 
@@ -942,21 +947,15 @@ main(int argc, char **argv) {
 
 	/* poll */
 	struct pollfd fds[1];
-
-	pid_t pid;
-	struct winsize ws;
 	struct termios tio;
 
-	ws.ws_col = term.width - 1;
-	ws.ws_row = term.height - 1;
-
-	pid = forkpty(&d, NULL, NULL, &ws);
-	if (pid < 0)
+	term.pid = forkpty(&d, NULL, NULL, NULL);
+	if (term.pid < 0)
 		err(1, "forkpty");
 
 	signal(SIGCHLD, cleanup);
 
-	if (pid == 0) {
+	if (term.pid == 0) {
 		/* child */
 		char *args[] = { "sh", NULL };
 		term.shell = getenv("SHELL");
@@ -974,7 +973,6 @@ main(int argc, char **argv) {
 	}
 
 	while (!term.ttydead) {
-		struct winsize ws;
 		pid_t pid;
 
 		ev = xcb_poll_for_event(conn);
@@ -1011,6 +1009,13 @@ main(int argc, char **argv) {
 				xcb_button_press_event_t *e = (xcb_button_press_event_t *)ev;
 				buttonpress(e->root_x, e->root_y);
 			} break;
+			case XCB_CONFIGURE_NOTIFY: {
+				xcb_configure_notify_event_t *e = (xcb_configure_notify_event_t *)ev;
+
+				if (term.winsiz.x != e->width || term.winsiz.y != e->height)
+					if (e->width > 3 * font->width && e->height > 3 * term.height)
+						resize(e->width / font->width, e->height / font->height);
+			}	break;
 			default:
 				DEBUG("unknown event %d", ev->response_type & ~0x80);
 			}
